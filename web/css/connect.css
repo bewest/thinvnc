@@ -1,0 +1,64 @@
+body,div,dl,dt,dd,ul,ol,li,h1,h2,h3,h4,h5,
+h6,pre,form,fieldset,input,p,blockquote,table,
+th,td { margin: 0; padding: 0; }
+fieldset,img,abbr { border: 0; }
+address,caption,cite,code,dfn,h1,h2,h3,
+h4,h5,h6,th,var { font-style: normal; font-weight: normal; }
+caption,th { text-align: left; }
+q:before,q:after { content: ''; }
+a { text-decoration: none; }
+body {
+    font-size: 8pt;
+    background: #fff;
+    font-family: Verdana,Arial,sans-serif;
+    color: #000;
+    margin-top: 0px;
+}
+table 
+{
+    font-size: 10pt;
+}
+.options {
+	margin-left: 0px;
+}
+.machine {
+	text-align: right;
+}
+a { color: #21759b; text-decoration: none; font-weight: normal; }
+a:visited {color:#4ca6cf;}
+p a { border-bottom: 1px solid #dfdfdf; }
+#footer {
+    clear: both;
+    border-top: 1px solid #dedede;
+    padding: 6px 14px;
+    width: 100%;
+    margin: 0 auto;
+    text-align: center;
+    position: fixed;
+    bottom: 5px;
+}
+#footer .wrapper {
+    width: 97%;
+}
+
+#footer p {
+    font-family: "Lucida Grande",Tahoma,"Bitstream Vera Sans",Arial,sans-serif;
+    float: left;
+    color: #bbb;
+    letter-spacing: 2px;
+}
+#footer span.copyright {
+color: #555;
+}
+#footer p a {
+    border: none;
+}
+
+#footer h6 {
+    float: right;
+    font-size: 10pt;
+}
+.chromeFrameInstallDefaultStyle {
+    width: 100%; /* default is 800px */
+    border: 5px solid blue;
+}

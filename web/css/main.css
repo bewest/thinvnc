@@ -1,0 +1,97 @@
+body {
+  padding: 0;
+  margin: 0;
+  text-align: center;
+  background-color: black;
+}
+
+#toolbarHandle 
+{
+  background-color: #dceaf9;
+  border-left: 1px solid #AAD3FF;
+  border-right: 1px solid #AAD3FF;
+  border-bottom: 1px solid #AAD3FF;
+  position: absolute;
+  z-index: 1001;
+  margin: 0px 0px 0px 0px;
+  padding: 0px 4px 0px 4px;
+  cursor: pointer;
+}
+
+.toolbar {
+  text-align: center;
+  background-color: #dceaf9;
+  white-space:nowrap;
+
+  border-left: 1px solid #AAD3FF;
+  border-top: 1px solid #AAD3FF;
+  border-right: 1px solid #AAD3FF;
+  border-bottom: 1px solid #AAD3FF;
+  
+  padding: 3px 5px 5px 5px;
+  position: absolute;
+  z-index: 1000;
+}
+
+.toolbar div {
+  display: inline;  
+}
+
+.icon {
+  background-repeat: no-repeat;
+  padding-left: 24px;
+}
+
+.btn {
+  width: 75px;
+  
+  border: 1px solid #c5d0e8;
+  
+  -webkit-border-radius: 5px;
+  -moz-border-radius: 5px;
+  
+  background-color: #f1f6fd ;
+  background-position: 5px 50%;
+  
+  cursor: pointer;
+  
+  padding: 5px 10px 5px 24px;
+  font-size: 8px;
+  font-weight: bold;
+  font-family: tahoma, serif;
+  text-transform: uppercase;
+  color: #3f5c90;
+}
+
+.btn:hover {
+  border-color: #b1bcdf #75819e #75819e #b1bcdf;
+  background-color: #e4ecf3;
+  color: #285dbb;
+}
+
+.btn.pressed
+{
+    border-color: #75819e #b1bcdf #b1bcdf #75819e;
+    background-color: #ADC5DA;
+/*    color: #285dbb;*/
+}
+
+.btn.hidden { display: none; }
+
+.mouse { background-image: url(../images/mouse.png); }
+.cursor { background-image: url(../images/cursor.png); }
+.pause { background-image: url(../images/pause.png); }
+.resume { background-image: url(../images/resume.png); }
+.refresh { background-image: url(../images/refresh.png); }
+.scale { background-image: url(../images/scale.png); }
+.colors { background-image: url(../images/colors.png); }
+.monitor { background-image: url(../images/monitor.png); }
+.disconnect { background-image: url(../images/connect.png); }
+
+#desk {
+	position:absolute;
+	left: 0;
+	top: 0;
+	z-index: 255;
+	overflow:hidden;
+}
