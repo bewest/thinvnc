@@ -1,11 +1,11 @@
 ﻿	<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 		<PropertyGroup>
-			<ProjectGuid>{d6699241-31ef-451e-ac3a-db10735cd5dc}</ProjectGuid>
-			<MainSource>ThinVncIcs.dpr</MainSource>
+			<ProjectGuid>{468c6515-d64b-4560-b709-4438f22b30b7}</ProjectGuid>
+			<MainSource>ThinVnc.dpr</MainSource>
 			<Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
 			<Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
 			<DCC_DCCCompiler>DCC32</DCC_DCCCompiler>
-			<DCC_DependencyCheckOutputName>OverbyteIcsWebServ.exe</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>..\..\..\ThinVnc.exe</DCC_DependencyCheckOutputName>
 			<ProjectVersion>12.0</ProjectVersion>
 			<Config Condition="'$(Config)'==''">Debug</Config>
 		</PropertyGroup>
@@ -23,43 +23,38 @@
 			<Base>true</Base>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Base)'!=''">
-			<DCC_DebugDCUs>true</DCC_DebugDCUs>
-			<DCC_ExeOutput>bin</DCC_ExeOutput>
-			<DCC_BplOutput>dcu</DCC_BplOutput>
-			<DCC_DcuOutput>dcu</DCC_DcuOutput>
-			<DCC_UnitSearchPath>$(FREE)\OverbyteIcsV7\Delphi\Vc32;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-			<DCC_DependencyCheckOutputName>bin\ThinVncIcs.exe</DCC_DependencyCheckOutputName>
+			<DCC_DependencyCheckOutputName>ThinVnc.exe</DCC_DependencyCheckOutputName>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_1)'!=''">
+			<DCC_DependencyCheckOutputName>..\..\..\ThinVnc.exe</DCC_DependencyCheckOutputName>
 			<Version>7.0</Version>
 			<DCC_DebugInformation>False</DCC_DebugInformation>
 			<DCC_LocalDebugSymbols>False</DCC_LocalDebugSymbols>
-			<DCC_Optimize>False</DCC_Optimize>
-			<DCC_IntegerOverflowCheck>True</DCC_IntegerOverflowCheck>
-			<DCC_RangeChecking>True</DCC_RangeChecking>
 			<DCC_SymbolReferenceInfo>0</DCC_SymbolReferenceInfo>
-			<DCC_MapFile>3</DCC_MapFile>
-			<DCC_Define>RELEASE;$(DCC_Define)</DCC_Define>
-			<DCC_SYMBOL_DEPRECATED>False</DCC_SYMBOL_DEPRECATED>
-			<DCC_SYMBOL_LIBRARY>False</DCC_SYMBOL_LIBRARY>
-			<DCC_SYMBOL_PLATFORM>False</DCC_SYMBOL_PLATFORM>
-			<DCC_UNIT_PLATFORM>False</DCC_UNIT_PLATFORM>
+			<DCC_Define>RELEASE;USE_SSL;$(DCC_Define)</DCC_Define>
+			<DCC_ExeOutput>\source\thinvnc\</DCC_ExeOutput>
+			<DCC_UnitSearchPath>..\..\..\Common\Windows\Delphi2007;..\..\..\Client\Windows\Delphi2007;..\..\..\Present;\Source\Sshdesktop\bridge;\Source\Sshdesktop\server;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+			<DCC_ResourcePath>..\..\..\Common\Windows\Delphi2007;..\..\..\Client\Windows\Delphi2007;..\..\..\Present;\Source\Sshdesktop\bridge;\Source\Sshdesktop\server;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_ResourcePath)</DCC_ResourcePath>
+			<DCC_ObjPath>..\..\..\Common\Windows\Delphi2007;..\..\..\Client\Windows\Delphi2007;..\..\..\Present;\Source\Sshdesktop\bridge;\Source\Sshdesktop\server;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_ObjPath)</DCC_ObjPath>
+			<DCC_IncludePath>..\..\..\Common\Windows\Delphi2007;..\..\..\Client\Windows\Delphi2007;..\..\..\Present;\Source\Sshdesktop\bridge;\Source\Sshdesktop\server;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_IncludePath)</DCC_IncludePath>
+			<DCC_DcuOutput>\source\thinvnc\dcus\ThinVncR</DCC_DcuOutput>
+			<DCC_ObjOutput>\source\thinvnc\dcus\ThinVncR</DCC_ObjOutput>
+			<DCC_HppOutput>\source\thinvnc\dcus\ThinVncR</DCC_HppOutput>
 		</PropertyGroup>
 		<PropertyGroup Condition="'$(Cfg_2)'!=''">
+			<DCC_DependencyCheckOutputName>..\..\..\ThinVnc.exe</DCC_DependencyCheckOutputName>
 			<Version>7.0</Version>
-			<DCC_Optimize>False</DCC_Optimize>
-			<DCC_IntegerOverflowCheck>True</DCC_IntegerOverflowCheck>
-			<DCC_RangeChecking>True</DCC_RangeChecking>
+			<DCC_Define>DEBUG;USE_SSL;$(DCC_Define)</DCC_Define>
+			<DCC_ExeOutput>\source\thinvnc\</DCC_ExeOutput>
+			<DCC_DcuOutput>.\dcu</DCC_DcuOutput>
+			<DCC_ObjOutput>.\dcu</DCC_ObjOutput>
+			<DCC_HppOutput>.\dcu</DCC_HppOutput>
+			<DCC_UnitSearchPath>..\;..\..\..\Private;..\..\..\Common\Windows\;..\..\..\Client\Windows\;..\..\..\Present;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
+			<DCC_ResourcePath>..\;..\..\..\Private;..\..\..\Common\Windows\;..\..\..\Client\Windows\;..\..\..\Present;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_ResourcePath)</DCC_ResourcePath>
+			<DCC_ObjPath>..\;..\..\..\Private;..\..\..\Common\Windows\;..\..\..\Client\Windows\;..\..\..\Present;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_ObjPath)</DCC_ObjPath>
+			<DCC_IncludePath>..\;..\..\..\Private;..\..\..\Common\Windows\;..\..\..\Client\Windows\;..\..\..\Present;\Source\Free\OverbyteIcsV7\Delphi\Vc32;\Source\Free\OverbyteIcsV7\Delphi\Vc32\ZOBJ123\;\Source\Free\OverbyteIcsV7\Delphi\SslInternet;\Source\Free\Skype;\Source\Free\Msn;\Source\Free\dpcrypt;\Source\Free\dpcrypt\Ciphers;\Source\Free\dpcrypt\Hashes;\Source\Registrados\SasLibEx;$(DCC_IncludePath)</DCC_IncludePath>
 			<DCC_MapFile>3</DCC_MapFile>
-			<DCC_Define>DEBUG;$(DCC_Define)</DCC_Define>
-			<DCC_SYMBOL_DEPRECATED>False</DCC_SYMBOL_DEPRECATED>
-			<DCC_SYMBOL_LIBRARY>False</DCC_SYMBOL_LIBRARY>
-			<DCC_SYMBOL_PLATFORM>False</DCC_SYMBOL_PLATFORM>
-			<DCC_UNIT_PLATFORM>False</DCC_UNIT_PLATFORM>
-			<DCC_UnitSearchPath>..\vc32;$(DCC_UnitSearchPath)</DCC_UnitSearchPath>
-			<DCC_ResourcePath>..\vc32;$(DCC_ResourcePath)</DCC_ResourcePath>
-			<DCC_ObjPath>..\vc32;$(DCC_ObjPath)</DCC_ObjPath>
-			<DCC_IncludePath>..\vc32;$(DCC_IncludePath)</DCC_IncludePath>
+			<DCC_GenerateStackFrames>True</DCC_GenerateStackFrames>
 		</PropertyGroup>
 		<ProjectExtensions>
 			<Borland.Personality>Delphi.Personality.12</Borland.Personality>
@@ -77,7 +72,7 @@
 						<VersionInfo Name="MajorVer">0</VersionInfo>
 						<VersionInfo Name="MinorVer">9</VersionInfo>
 						<VersionInfo Name="Release">0</VersionInfo>
-						<VersionInfo Name="Build">3</VersionInfo>
+						<VersionInfo Name="Build">2</VersionInfo>
 						<VersionInfo Name="Debug">False</VersionInfo>
 						<VersionInfo Name="PreRelease">False</VersionInfo>
 						<VersionInfo Name="Special">False</VersionInfo>
@@ -87,37 +82,41 @@
 						<VersionInfo Name="CodePage">1252</VersionInfo>
 					</VersionInfo>
 					<VersionInfoKeys>
-						<VersionInfoKeys Name="CompanyName"/>
-						<VersionInfoKeys Name="FileDescription"/>
-						<VersionInfoKeys Name="FileVersion">0.9.0.3</VersionInfoKeys>
+						<VersionInfoKeys Name="CompanyName">Cybele Software, Inc.</VersionInfoKeys>
+						<VersionInfoKeys Name="FileDescription">ThinVnc</VersionInfoKeys>
+						<VersionInfoKeys Name="FileVersion">0.9.0.2</VersionInfoKeys>
 						<VersionInfoKeys Name="InternalName"/>
-						<VersionInfoKeys Name="LegalCopyright">Copyright© by Gustavo Ricardi</VersionInfoKeys>
-						<VersionInfoKeys Name="LegalTrademarks"/>
+						<VersionInfoKeys Name="LegalCopyright">© 2010 by Cybele Software, Inc.</VersionInfoKeys>
+						<VersionInfoKeys Name="LegalTrademarks">All rights reserved</VersionInfoKeys>
 						<VersionInfoKeys Name="OriginalFilename"/>
-						<VersionInfoKeys Name="ProductName">ThinVNC </VersionInfoKeys>
-						<VersionInfoKeys Name="ProductVersion">0.9.0.3</VersionInfoKeys>
+						<VersionInfoKeys Name="ProductName">ThinVNC</VersionInfoKeys>
+						<VersionInfoKeys Name="ProductVersion">0.9</VersionInfoKeys>
 						<VersionInfoKeys Name="Comments"/>
 					</VersionInfoKeys>
-					<Source>
-						<Source Name="MainSource">ThinVncIcs.dpr</Source>
-					</Source>
 					<Excluded_Packages>
-						<Excluded_Packages Name="C:\Users\Public\Documents\RAD Studio\5.0\Bpl\IcsDel110.bpl">ICS (Internet Component Suite) for Delphi 2007</Excluded_Packages>
-						<Excluded_Packages Name="C:\Users\Public\Documents\RAD Studio\5.0\Bpl\MwDel110.bpl">MidWare for Delphi 2007</Excluded_Packages>
-						<Excluded_Packages Name="$(BDS)\bin\dclofficexp100.bpl">Composants Microsoft Office XP Sample Automation Server Wrapper</Excluded_Packages>
+						<Excluded_Packages Name="D:\Source\GlbStuff\bin\Cybele2007.bpl">(untitled)</Excluded_Packages>
 						<Excluded_Packages Name="$(BDS)\bin\bcboffice2k100.bpl">CodeGear C++Builder Office 2000 Servers Package</Excluded_Packages>
 						<Excluded_Packages Name="$(BDS)\bin\bcbofficexp100.bpl">CodeGear C++Builder Office XP Servers Package</Excluded_Packages>
-						<Excluded_Packages Name="$(BDS)\bin\dcloffice2k100.bpl">Composants Microsoft Office 2000 Sample Automation Server Wrapper</Excluded_Packages>
+						<Excluded_Packages Name="$(BDS)\bin\dcloffice2k100.bpl">Microsoft Office 2000 Sample Automation Server Wrapper Components</Excluded_Packages>
+						<Excluded_Packages Name="$(BDS)\bin\dclofficexp100.bpl">Microsoft Office XP Sample Automation Server Wrapper Components</Excluded_Packages>
+						<Excluded_Packages Name="D:\SOURCE\TRIAL\tmssoftware\GridPack\GridPackD2006.bpl">TMS Grid Pack</Excluded_Packages>
+						<Excluded_Packages Name="D:\SOURCE\TRIAL\tmssoftware\GridPack\GridPackDED2006.bpl">TMS Grid Pack design time support</Excluded_Packages>
+						<Excluded_Packages Name="D:\SOURCE\TRIAL\tmssoftware\GridPack\DBGridPackD2006.bpl">TMS DB Grid Pack</Excluded_Packages>
+						<Excluded_Packages Name="D:\SOURCE\TRIAL\tmssoftware\GridPack\DBGridPackDED2006.bpl">TMS DB Grid Pack design time support</Excluded_Packages>
+						<Excluded_Packages Name="D:\SOURCE\TRIAL\tmssoftware\GridPack\GridPackXLSD2006.bpl">TMS Grid Pack Excel support</Excluded_Packages>
 					</Excluded_Packages>
+					<Source>
+						<Source Name="MainSource">ThinVnc.dpr</Source>
+					</Source>
 				</Delphi.Personality>
 			</BorlandProject>
 			<ProjectFileVersion>12</ProjectFileVersion>
 		</ProjectExtensions>
 		<ItemGroup>
-			<DelphiCompile Include="ThinVncIcs.dpr">
+			<DelphiCompile Include="ThinVnc.dpr">
 				<MainSource>MainSource</MainSource>
 			</DelphiCompile>
-			<DCCReference Include="ThinVnc.OverbyteIcsWebServ.pas">
+			<DCCReference Include="..\ThinVnc.Manager.pas">
 				<Form>WebServForm</Form>
 			</DCCReference>
 			<BuildConfiguration Include="Base">
@@ -290,7 +289,7 @@ boSaveCompressedCopyInCaseOfError=0
 boHandleSafeCallExceptions=1
 boCallRTLExceptionEvent=0
 boCatchHandledExceptions=0
-loCatchLeaks=0
+loCatchLeaks=1
 loGroupsSonLeaks=1
 loHideBorlandLeaks=1
 loFreeAllLeaks=1
@@ -616,5 +615,5 @@ Count mtException_AntiFreeze=1
 mtException_AntiFreeze0="The application seems to be frozen."
 Count mtInvalidEmailMsg=1
 mtInvalidEmailMsg0="Invalid email."
-TextsCollection=English
+TextsCollection=
 EurekaLog Last Line -->
