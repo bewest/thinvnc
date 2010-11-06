@@ -38,7 +38,8 @@ unit ThinVnc.Utils;
 interface
 
 uses Windows,Messages,Classes,pngimage,Graphics,SysUtils,jpeg,TLHelp32,
-  SyncObjs,WinSock,Forms,ShlObj,
+  SyncObjs,WinSock,Forms,ShlObj,WebConst,HttpApp,
+  ThinVNC.Unicode,
   ThinVnc.Log;
 
 const
@@ -116,18 +117,26 @@ type
     property ProductVersion: string index 7 read GetVersionItem;
   end;
 
+function HTTPDecode(const AStr: AnsiString): AnsiString;
 function Height(ARect:TRect):integer;
 function Width(ARect:TRect):integer;
 function GetTempPath:string;
+function GetComputerName:string;
 function GetModuleFilename:string;
 function GetModulePath:string;
 function GetWindowClassName(wnd:THandle):string;
 function EncodeBase64(const Input: TStream): AnsiString; overload;
 function EncodeBase64(const Input: AnsiString): AnsiString; overload;
-procedure CopyBmpToPng(var Png : TPNGObject; Bmpo,Bmpm: TBitmap;R:TRect);
+procedure CopyBmpToPng(var Png : TPNGObject; Bmpo,Bmpm: TBitmap;R:TRect);overload;
+procedure CopyBmpToPng(var Png : TPNGObject; Bmp: TBitmap;R:TRect;Pf : TPixelFormat);overload;
 procedure CopyBmpToJpg(var Jpg : TJpegImage; Bmp: TBitmap;R:TRect;Pf : TPixelFormat);
 function CopyBmpToBmp(Bmp: TBitmap;R:TRect;Pf : TPixelFormat):TBitmap;
 function CompareBitmaps(Bitmap1,Bitmap2:Graphics.TBitmap;var R:TRect):Boolean;
+function DumpRect(ARect:TRect): string;
+function DumpArray(AArray:TRectArray): string;
+function DumpRegion(ARgn:HRGN): string;
+function GetRegionCount(UpdateRgn:HRGN):Integer;
+function ExtractClippingRegions(ARgn:HRGN;R: TRect): TRectArray;
 function GetDiffRects(Bitmap1,Bitmap2:Graphics.TBitmap;rbmp : TRect):TRectArray;
 function EqualBitmaps(Bitmap1,Bitmap2:Graphics.TBitmap):Boolean;
 function IsWin98: Boolean;
@@ -136,6 +145,7 @@ function IsWinXP: Boolean;
 function IsVistaOrGreater: Boolean;
 function IsVista: Boolean;
 function SwitchToActiveDesktop:string;
+function IsThisComputer(DestAddr: Ansistring): Boolean;
 
 function WaitForEvent(AEvent:TEvent;ATimeout:Cardinal;CancelCallback:TCancelCallback=nil):TWaitResult;
 procedure ProcessMessages;
@@ -146,6 +156,7 @@ function DVWidth(Index:Integer=-1):Integer;
 function DVHeight(Index:Integer=-1):Integer;
 function DVLeft(Index:Integer=-1):Integer;
 function DVTop(Index:Integer=-1):Integer;
+
 
 implementation
 
@@ -249,6 +260,16 @@ begin
   SetLength(result,Windows.GetTempPath(255,@result[1]));
 end;
 
+function GetComputerName:string;
+var
+  size : DWORD;
+begin
+  size:=2048;
+  SetLength(result,size);
+  Windows.GetComputername(PChar(result),size);
+  SetLength(result,size);
+end;
+
 function GetModuleFilename:string;
 begin
   SetLength(result,255);
@@ -298,10 +319,20 @@ begin
   W := Width(R);
   bmp2:=CreateBitmap(Width(R),Height(R));
   try
-    Windows.BitBlt(bmp2.canvas.handle, 0, 0, Width(R), Height(R), BmpM.canvas.handle,
-         R.Left, R.Top, SRCCOPY);
-      Png.CompressionLevel:=9;
-    Png.Assign(Bmp2);
+    bmp2.Canvas.Lock;
+    try
+      BmpM.Canvas.Lock;
+      try
+        Windows.BitBlt(bmp2.canvas.handle, 0, 0, Width(R), Height(R), BmpM.canvas.handle,
+           R.Left, R.Top, SRCCOPY);
+        Png.CompressionLevel:=9;
+        Png.Assign(Bmp2);
+      finally
+        BmpM.Canvas.Unlock;
+      end;
+    finally
+      Bmp2.Canvas.Unlock;
+    end;
     {$IFDEF PNG_TRANSPARENT}
     bmp1:=CreateBitmap(Width(R),Height(R));
     try
@@ -346,9 +377,31 @@ end;
 
 function CopyBmpToBmp(Bmp: TBitmap;R:TRect;Pf : TPixelFormat):TBitmap;
 begin
-  result:=CreateBitmap(Width(R),Height(R),Pf);
-  Windows.BitBlt(result.canvas.handle, 0, 0, Width(R), Height(R), Bmp.canvas.handle,
-        R.Left, R.Top, SRCCOPY);
+  Bmp.Canvas.Lock;
+  try
+    result:=CreateBitmap(Width(R),Height(R),Pf);
+    result.Canvas.Lock;
+    try
+      Windows.BitBlt(result.canvas.handle, 0, 0, Width(R), Height(R), Bmp.canvas.handle,
+            R.Left, R.Top, SRCCOPY);
+    finally
+      result.Canvas.Unlock;
+    end;
+  finally
+    Bmp.Canvas.Unlock;
+  end;
+end;
+
+procedure CopyBmpToPng(var Png : TPNGObject; Bmp: TBitmap;R:TRect;Pf : TPixelFormat);
+var
+  bmp1 : TBitmap;
+begin
+  bmp1:=CopyBmpToBmp(Bmp,R,pf);
+  try
+    Png.Assign(bmp1);
+  finally
+    bmp1.Free;
+  end;
 end;
 
 procedure CopyBmpToJpg(var Jpg : TJpegImage; Bmp: TBitmap;R:TRect;Pf : TPixelFormat);
@@ -429,6 +482,115 @@ begin
   end;
 end;
 
+function GetRegionCount(UpdateRgn:HRGN):Integer;
+var
+  Size : Integer;
+  RgnData: PRgnData;
+  P :PAnsiChar;
+  PR : PRect;
+  n : Integer;
+begin
+  size:=GetRegionData(UpdateRgn,0,nil);
+  if size>0 then begin
+    RgnData:=AllocMem(size);
+    try
+      GetRegionData(UpdateRgn,size,RgnData);
+      p:=@RgnData.Buffer[0];
+      result:=RgnData^.rdh.nCount;
+      for n := 0 to result - 1 do begin
+        PR:=PRect(p);
+        Inc(p,SizeOf(TRect));
+      end;
+    finally
+      Freemem(RgnData);
+    end;
+  end else begin
+    result:=0;
+  end;
+end;
+
+function ExtractClippingRegions(ARgn:HRGN;R: TRect): TRectArray;
+var n,size : Integer;
+  Count: DWORD;
+  RgnData: PRgnData;
+  P :PAnsiChar;
+  PR : PRect;
+  Rgn : HRgn;
+begin
+  SetLength(result,0);
+  Rgn:=CreateRectRgn(R.Left,R.Top,R.Right,R.Bottom);
+  try
+    CombineRgn(Rgn, ARgn,Rgn, RGN_AND);
+
+    size:=GetRegionData(Rgn,0,nil);
+    if size>0 then begin
+      RgnData:=AllocMem(size);
+      try
+        Count:=GetRegionData(Rgn,size,RgnData);
+        if Count=0 then abort;
+        p:=@RgnData.Buffer[0];
+
+        if RgnData^.rdh.nCount>0 then
+        for n := 0 to RgnData^.rdh.nCount - 1 do begin
+          PR:=PRect(p);
+          SetLength(result,Length(result)+1);
+          result[Length(result)-1]:=PR^;
+          Inc(p,SizeOf(TRect));
+        end;
+      finally
+        Freemem(RgnData);
+      end;
+    end;
+  finally
+    DeleteObject(Rgn);
+  end;
+end;
+
+function DumpRect(ARect:TRect): string;
+begin
+  result:=Format('[%d,%d,%d,%d]',[ARect.Left,ARect.Top,ARect.Right,ARect.Bottom]);
+end;
+
+function DumpArray(AArray:TRectArray): string;
+var n : Integer;
+begin
+  result:='';
+  for n := 0 to Length(AArray) - 1 do begin
+    if result<>'' then result:=result+',';
+    result:=result + Format('[%d,%d,%d,%d]',
+      [AArray[n].Left,AArray[n].Top,AArray[n].Right,AArray[n].Bottom]);
+  end;
+end;
+
+function DumpRegion(ARgn:HRGN): string;
+var n,size : Integer;
+  Count: DWORD;
+  RgnData: PRgnData;
+  P :PAnsiChar;
+  PR : PRect;
+begin
+  SetLength(result,0);
+  size:=GetRegionData(ARgn,0,nil);
+  if size>0 then begin
+    RgnData:=AllocMem(size);
+    try
+      Count:=GetRegionData(ARgn,size,RgnData);
+      if Count=0 then abort;
+      p:=@RgnData.Buffer[0];
+
+      if RgnData^.rdh.nCount>0 then
+      for n := 0 to RgnData^.rdh.nCount - 1 do begin
+        PR:=PRect(p);
+        if result<>'' then result:=result+',';
+        result:=result + Format('[%d,%d,%d,%d]',[PR^.Left,PR^.Top,PR^.Right,PR^.Bottom]);
+        Inc(p,SizeOf(TRect));
+      end;
+    finally
+      Freemem(RgnData);
+    end;
+  end;
+end;
+
 function GetDiffRects(Bitmap1,Bitmap2:Graphics.TBitmap;rbmp : TRect):TRectArray;
 var
   i : INTEGER;
@@ -443,13 +605,14 @@ var
 begin
   try
     SetLength(result,0);
-    b:=(Bitmap1.Height<>Bitmap2.Height) or
+    b:=not assigned(Bitmap1) or not assigned(Bitmap2) or
+             (Bitmap1.Height<>Bitmap2.Height) or
              (Bitmap1.Width<>Bitmap2.Width) or
              (Bitmap1.PixelFormat<>Bitmap2.PixelFormat) or
              (Bitmap1.Width=1) and (Bitmap1.Height=1);
     if b then begin
       SetLength(result,1);
-      Result[0]:=Rect(0,0,Bitmap1.Width,Bitmap1.Height);
+      Result[0]:=rbmp;
       exit;
     end;
 
@@ -501,8 +664,10 @@ begin
 
     if Length(result)=0 then exit;
 
-    for i:=0 to Length(result)-1 do
-      InflateRect(Result[i],1,1);
+    for i:=0 to Length(result)-1 do begin
+      Inc(Result[i].Right);
+      Inc(Result[i].Bottom);
+    end;
   except
     On E:Exception do begin
       LogException('GetDiffRects');
@@ -556,7 +721,7 @@ end;
 
 function GetWindowClassName(wnd:THandle):string;
 begin
-  result:=StringOfChar(#0,255);
+  SetLength(result,255);
   SetLength(result,windows.GetClassName(wnd,@result[1],255));
 end;
 
@@ -759,8 +924,10 @@ begin
     CurDesktop := GetThreadDesktop(GetCurrentThreadID);
 
     SetLength(result,255);
-    if GetUserObjectInformation(LogonDesktop,UOI_NAME,@result[1],255,lpnLengthNeeded) then 
-      result:=StrPas(PChar(result));
+    if GetUserObjectInformation(LogonDesktop,UOI_NAME,@result[1],255,lpnLengthNeeded) then
+      result:=StrPas(PChar(result))
+    else
+      result:='';
 
     if (LogonDesktop<>0) and (LogonDesktop<>CurDesktop) then begin
 //      LogDebug('Switching to Desktop: '+result);
@@ -790,14 +957,14 @@ end;
 
 function WaitForEvent(AEvent:TEvent;ATimeout:Cardinal;CancelCallback:TCancelCallback):TWaitResult;
 var InitialTime : TDateTime;
-  Elapsed : Integer;
+  Elapsed : Cardinal;
   Cancel : Boolean;
 begin
   InitialTime:=Now;
   Elapsed:=0;
   result:=wrTimeOut;
   if Assigned(CancelCallback) then CancelCallback(Cancel);
-  While(ATimeout>Cardinal(Elapsed)) do begin
+  While(ATimeout>Elapsed) do begin
     result:=AEvent.WaitFor(10);
     case result of
       wrTimeOut: begin
@@ -826,17 +993,18 @@ begin
   Result := StrPas(Buffer);
 end;
 
-function IsThisComputer(DestAddr: string): Boolean;
-    function IsLocalName: Boolean;
+function IsThisComputer(DestAddr: Ansistring): Boolean;
+  
+  function IsLocalName: Boolean;
   var
     Addr: Integer;
     Host: PHostEnt;
   begin
     Result := False;
-    Addr := inet_addr(PChar(DestAddr));
+    Addr := inet_addr(PAnsiChar(DestAddr));
     if (Addr = INADDR_NONE) then
     begin
-      Host := gethostbyname(PChar(DestAddr));
+      Host := gethostbyname(PAnsiChar(DestAddr));
       if Host <> nil then
         Addr := PInAddr(Host.h_addr_list^)^.S_addr;
     end;
@@ -889,6 +1057,65 @@ begin
   ShlObj.SHGetSpecialFolderPath(0,PChar(path),CSIDL,False);
   result:=Trim(path);
 end;
+
+function HTTPDecode(const AStr: AnsiString): AnsiString;
+var
+  Sp, Rp, Cp: PAnsiChar;
+  Wc: WideChar;
+  S: AnsiString;
+  S2: AnsiString;
+begin
+  SetLength(Result, Length(AStr));
+  Sp := PAnsiChar(AStr);
+  Rp := PAnsiChar(Result);
+  Cp := Sp;
+  try
+    while Sp^ <> #0 do
+    begin
+      case Sp^ of
+        '+': Rp^ := ' ';
+        '%': begin
+               // Look for an escaped % (%%) or %<hex> encoded character
+               Inc(Sp);
+               if Sp^ = '%' then
+                 Rp^ := '%'
+               else
+               begin
+                 Cp := Sp;
+                 Inc(Sp);
+                 if (Cp^ <> #0) and (Sp^ <> #0) then
+                 begin
+                   if Cp^ = 'u' then
+                   begin
+                     S := '$' + Sp^ + (Sp + 1)^ + (Sp + 2)^ + (Sp + 3)^;
+                     Wc := WideChar(StrToInt(S));
+                     UnicodeToUtf8(Rp, 1, @Wc, 1);
+                     if Rp^ = #$00 then
+                       Rp^ := Char(UNICODE_INVALID);
+                     Inc(Sp, 3);
+                   end else begin
+                     S := '$' + Cp^ + Sp^;
+                     Rp^ := AnsiChar(StrToInt(S));
+                   end;
+                 end
+                 else
+                   raise EWebBrokerException.CreateFmt(sErrorDecodingURLText, [Cp - PAnsiChar(AStr)]);
+               end;
+             end;
+      else
+        Rp^ := Sp^;
+      end;
+      Inc(Rp);
+      Inc(Sp);
+    end;
+  except
+    on E:EConvertError do
+      raise EConvertError.CreateFmt(sInvalidURLEncodedChar,
+        ['%' + Cp^ + Sp^, Cp - PAnsiChar(AStr)])
+  end;
+  SetLength(Result, Rp - PAnsiChar(Result));
+end;
+
 
 
 initialization

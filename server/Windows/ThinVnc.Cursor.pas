@@ -37,7 +37,8 @@ unit ThinVnc.Cursor;
 {$I ThinVnc.inc}
 interface
 
-uses Windows,Classes,Sysutils,Graphics,PngImage,ThinVnc.Utils,math,Forms,Controls;
+uses Windows,Classes,Sysutils,Graphics,PngImage,ThinVnc.Utils,math,Forms,Controls,
+  ThinVnc.Log;
 
 type
   TRGBLine = array[Word] of TRGBTriple;
@@ -75,24 +76,15 @@ begin
 
   result.Width := 32;
   result.Height := 32;
-  result.PixelFormat := pf24bit;  // avoid working with palettes
+  result.PixelFormat := pf32bit;  // avoid working with palettes
 
-  // Draw cursor on canvas of CursorBitmap
-  DrawIconEx(result.Canvas.Handle, 0,0, CursorHandle, 32,32, 0,0, DI_NORMAL);
-
-  // Flood fill cursor from the "outside" so a white cursor will
-  // appear white.  Assume right-top position will work for floodfilling
-  // the whole area.  Assume RGB(250,250,250) will work as transparency color.
   result.Canvas.Brush.Color := RGB(250,250,250);
-  result.Canvas.FloodFill(31,0, clWhite, fsSurface);
-
-  // Kludge fix for 3DMove cursor since upper left corner is "blocked"
-  // during flood fill.
-  result.Canvas.FloodFill(0,0, clWhite, fsSurface);
-
+  result.Canvas.FillRect(Rect(0,0,32,32));
   result.TransparentMode := tmFixed;
   result.TransparentColor := RGB(250,250,250);
   result.Transparent := TRUE;
+
+  DrawIconEx(result.Canvas.Handle,0,0, CursorHandle, 32,32, 0,0, DI_NORMAL);
 end;
 
 procedure ConvertToPNG(Source: TGraphic; out Dest: TPNGObject);
@@ -306,11 +298,11 @@ var
   n : Integer;
   ci : TCursorInfo;
 begin
-  cX:=CI.ptScreenPos.X;
-  cY:=CI.ptScreenPos.Y;
   cur:='default';
   CI.cbSize := SizeOf(CI);
   GetCursorInfo(CI);
+  cX:=CI.ptScreenPos.X;
+  cY:=CI.ptScreenPos.Y;
 
   for n := crDefault downto crSizeAll do begin
     if Screen.Cursors[n]=CI.hCursor then begin
@@ -372,13 +364,9 @@ var
   IconInfo : TIconInfo;
   png : TPNGObject;
   bmp : TBitmap;
+  w,h : Integer;
 begin
-  if FShapeChanged then
-    FLastHwnd:=(FLastHwnd mod 10)+1;
-
-  result:=Format('{ "hwnd":"%d","zidx":%d,"left":%d,"top":%d,"width":%d,"height":%d',
-                    [FLastHwnd,255,FPos.X-FHotspot.X,FPos.Y-FHotspot.Y,32,32]);
-
+  imgs:='';
   if FShapeChanged then
   try
     CI.cbSize := SizeOf(CI);
@@ -390,6 +378,8 @@ begin
         FHotspot.Y:=IconInfo.yHotspot;
         bmp:=GetBitmapFromCursor(CI.hCursor);
         try
+          w:=bmp.Width;
+          h:=bmp.Height;
           bmp.TransparentMode:=tmAuto;
           ConvertToPNG(bmp,png);
           try
@@ -404,11 +394,16 @@ begin
       finally
         ms.Free;
       end;
-      imgs:=Format('{ "x":%d,"y":%d,"w":%d,"h":%d,"img": "%s" }',[0,0,32,32,img]);
+      imgs:=Format('{ "x":%d,"y":%d,"w":%d,"h":%d,"img": "%s" }',[32-FHotspot.X,32-FHotspot.Y,w,h,img]);
       result:=result+Format(',"imgs": [%s]}',[imgs])
     end else result:=result+'}';
   except
-  end else result:=result+'}';
+  end;
+
+  result:=Format('{ "hwnd":"%d","zidx":%d,"left":%d,"top":%d,"width":%d,"height":%d,"dx":%d,"dy":%d',
+                    [0,500,FPos.X-32,FPos.Y-32,64,64,32,32]);
+  if imgs<>'' then result:=result+Format(',"imgs": [%s]}',[imgs])
+  else result:=result+'}';
 end;
 
 

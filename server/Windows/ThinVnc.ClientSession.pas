@@ -35,55 +35,63 @@
 unit ThinVnc.ClientSession;
 {$I ThinVnc.DelphiVersion.inc}
 {$I ThinVnc.inc}
+
 interface
-uses Windows,Classes,Sysutils,Graphics,Forms,jpeg,uLkJSON, Contnrs,
-  SyncObjs,uAdvHttp,StrUtils,
+uses ActiveX,Windows,Messages,Classes,Sysutils,Graphics,Forms,jpeg, Contnrs,
+  SyncObjs,StrUtils,Clipbrd,Multimon,
+  ThinVnc.TcpCommon,
   ThinVnc.Log,
   ThinVnc.Utils,
-  ThinVnc.Cache,
+  ThinVNC.LkJSON,
   ThinVnc.SessionWindow,
   ThinVnc.Cursor,
+  ThinVnc.AdvHttp,
   ThinVnc.InputQueue,
+  ThinVNC.DigestAuth,
   ThinVnc.MirrorWindow;
 
 type
   TCallbackSendEvent = procedure (Text:AnsiString;APacketNumber:Cardinal) of object;
   TCallbackTextEvent = procedure (Text:AnsiString) of object;
   TClientSession = class;
+  TClientSessionClass = class of TClientSession;
   TConnectStatus = (csNone,csLocal,csRemote);
+  TAuthStatus = (asAuthNotRequired,asAuthenticated,asAuthRequired);
+  TAuthGetPasswordEvent = procedure (ASession:TClientSession;
+                                      AUser:string;var Password : String) of object;
+  TAuthGetTypeEvent = procedure(ASession:TClientSession;
+                              var AuthType:TAuthenticationType;var AuthRealm:string) of object;
 
+  TGatewayConnectEvent =  function (Session:TClientSession):Boolean of object;
+  TProcessAuthenticationEvent =   procedure (Sender:TObject;var Username:string;var AuthStatus:TAuthStatus;var Error:string) of object;
+
+  TClientType = (ctAjax,ctWebSockets,ctBinaryClient,ctPresentationViewer);
   TClientSession = class
   private
     FMouseControl : Boolean;
     FKbdControl   : Boolean;
     FProcessIds: array of Integer;
-    FUseJpeg: Boolean;
     FEmbeddedImage: Boolean;
     FSeamless : Boolean;
     FUseCanvas: Boolean;
     FJpgQuality: Integer;
     FJpgPixelFormat: TJPEGPixelFormat;
     FJpgGrayscale: boolean;
-    FForceRefresh : Boolean;
-    FMirrorManager : TMirrorManager;
-    FSessionWindowList : TSessionWindowList;
     FActive: Boolean;
     FOnSendCmd: TCallbackSendEvent;
     FOnSendBuf: TCallbackSendEvent;
     FLastUsed : TDateTime;
     FPolled : Boolean;
     FEnableEvent : TEvent;
+    FAuthStatus : TAuthStatus;
+    FSendThread : TSendThread;
     FOnForceCapture: TNotifyevent;
     FBinaryImages: Boolean;
     FRemotePointer : Boolean;
     FResetRemotePointer : Boolean;
     FOldSignature : string;
-    FKeyDownList : TList;
-    FLastKeytime : TDatetime;
-    FKeyCs : TCriticalSection;
     FInputQueue  : TThinBufferQueueThread;
     FActiveMonitor : Integer;
-
     FCursorWindow : TCursorWindow;
     FDestAddr: string;
     FOnSendScreen: TCallbackSendEvent;
@@ -91,11 +99,26 @@ type
     FConnectStatus: TConnectStatus;
     FConnectError: string;
     FGarbage : Boolean;
-    FAuthenticationData: AnsiString;
+    FAuthenticationData: string;
+    FauthByPass : string;
     FNeedRemoteAuthentication: Boolean;
+    FClientType : TClientType;
+    FId : string;
     FUser: string;
     FTicket: string;
     FForceDisconnect: boolean;
+    FJsonEvent: TEvent;
+    FJsonText: AnsiString;
+    FAuthDigestServer : TAuthDigestServer;
+    FAuthorization : string;
+    FOnAuthGetPassword: TAuthGetPasswordEvent;
+    FOnAuthGetType: TAuthGetTypeEvent;
+    FOnGatewayConnect: TGatewayConnectEvent;
+    FChangedRgn : HRGN;
+    FAuthenticationPassed: Boolean;
+    FOnProcessAuthentication: TProcessAuthenticationEvent;
+    FImageMethod: TImageMethod;
+    FLock : TCriticalsection;
     procedure SetJpgGrayscale(const Value: boolean);
     procedure SetJpgPixelFormat(const Value: TJPEGPixelFormat);
     procedure SetJpgQuality(const Value: Integer);
@@ -103,38 +126,61 @@ type
     function  RefreshWindows:boolean;
     procedure Refresh;
     procedure OnEmptyQueue(Sender: TObject);
-    procedure ProcessKeyboardInput(key: word; Down: boolean);
+    procedure AckReceived(APacketNumber: Cardinal);
     procedure SetActive(const Value: Boolean);
-    function KeysDown(vks: array of integer): boolean;
-    function KeysUp(vks: array of integer): boolean;
-    function PressFunctionKey(Func: string): Boolean;
-    procedure AddKeyDownToList(key:word);
-    procedure QueuedProcessPacket(Sender: TObject; Item: TThinQueueItem);
     procedure SetDestAddr(const Value: string);
     function GetActiveMonitor: Integer;
+    procedure SetScraper(const Value: TAbstractScraper);
+    procedure   AccumChangedRgn;
+    procedure   ClearChangedRgn;
+    procedure DumpMonitorInfo;
+    function RealMonitorIndex(Index:Integer): Integer;
+    function RealMonitorCount: Integer;
+  protected
+    FScraper : TAbstractScraper;
+    FForceRefresh : Boolean;
+    FLastCaptureIndex : Integer;
+    FSessionWindowList : TSessionWindowList;
+    procedure   QueuedProcessPacket(Sender: TObject; Item: TThinQueueItem);virtual;
+    property    JsonText: AnsiString read FJsonText write FJsonText;
+    procedure   ProcessKeyboardInput(key,ch: word; Down: boolean);overload;virtual;
+    procedure   ProcessKeyboardInput(key: word; Down: boolean);overload;virtual;
+    procedure   ProcessMouseInput(X,Y,delta,Btn:Integer;action:string);virtual;
+    procedure   GetCursor(var cur: string; var curX, curY: Integer);virtual;
+    function    ExecCommandLineOrder(jsObj: TlkJSONobject): AnsiString;
   public
-    constructor Create(AMirrorManager:TMirrorManager;APolled:Boolean=false);
+    constructor Create(APolled:Boolean=false); virtual;
     destructor  Destroy;override;
+    class function IsValid(AClientSession:TClientSession):Boolean;
     function    InputQueue:TThinBufferQueueThread;
     procedure   Update;
     function    IsGarbage:Boolean;
     procedure   Enable;
-    procedure   FlushKeyboard(force: Boolean=false);
-    procedure   ProcessMouseInput(X,Y,Btn:Integer;action:string);
+    function    TryLock:Boolean;
+    procedure   Lock;
+    procedure   Unlock;
+    procedure   SetGarbage;
     function    GetDifferences:boolean;
     function    ProcessDifferences:boolean;
     function    GetJson(path:string=''):string;
-    function    ProcessPacket(JsonText: Ansistring):AnsiString;
+    function    ProcessPacket(jsObj: TlkJSONobject):AnsiString; overload;virtual;
+    function    ProcessPacket(JsonText: Ansistring):AnsiString;  overload;
     function    GetSessionStatus:AnsiString;
     function    GetConnectStatus: AnsiString;
+    procedure   SendImages;
+    procedure   SendBuffer(AStream: TStream);
+    procedure   SendCmd(AText:AnsiString);
     procedure   SendScreen(AText: AnsiString);
+    function    WaitForJson(out output: AnsiString): Boolean; virtual;
+    property    Polled : Boolean read FPolled write FPolled;
     property    DestAddr : string read FDestAddr write SetDestAddr;
     property    IsLocal: Boolean read FIsLocal;
     property    Active: Boolean read FActive write SetActive;
     property    OnSendScreen : TCallbackSendEvent read FOnSendScreen write FOnSendScreen;
     property    OnSendCmd : TCallbackSendEvent read FOnSendCmd write FOnSendCmd;
     property    OnSendBuf : TCallbackSendEvent read FOnSendBuf write FOnSendBuf;
-    property    UseJpeg:Boolean read FUseJpeg write FUseJpeg;
+    property    OnAuthGetPassword: TAuthGetPasswordEvent read FOnAuthGetPassword write FOnAuthGetPassword;
+    property    OnAuthGetType: TAuthGetTypeEvent read FOnAuthGetType write FOnAuthGetType;
     property    EmbeddedImage:Boolean read FEmbeddedImage write FEmbeddedImage;
     property    BinaryImages:Boolean read FBinaryImages write FBinaryImages;
     property    UseCanvas:Boolean read FUseCanvas write FUseCanvas;
@@ -142,15 +188,22 @@ type
     property    JpgQuality:Integer read FJpgQuality write SetJpgQuality;
     property    JpgPixelFormat:TJPEGPixelFormat read FJpgPixelFormat write SetJpgPixelFormat;
     property    EnableEvent: TEvent read FEnableEvent;
+    property    JsonEvent: TEvent read FJsonEvent;
     property    OnForceCapture:TNotifyevent read FOnForceCapture write FOnForceCapture;
     property    ConnectStatus: TConnectStatus read FConnectStatus write FConnectStatus;
     property    ConnectError: string read FConnectError;
+    property    OnProcessAuthentication:TProcessAuthenticationEvent read FOnProcessAuthentication write FOnProcessAuthentication;
+    property    OnGatewayConnect:TGatewayConnectEvent read FOnGatewayConnect write FOnGatewayConnect;
     property    NeedRemoteAuthentication: Boolean read FNeedRemoteAuthentication;
-    property    AuthenticationData: AnsiString read FAuthenticationData;
+    property    AuthenticationData: string read FAuthenticationData;
     property    ActiveMonitor:Integer read GetActiveMonitor;
     property    Ticket:string read FTicket write FTicket;    
     property    User:string read FUser write FUser;
+    property    Id:string read FId write FId;
     property    ForceDisconnect:boolean read FForceDisconnect write FForceDisconnect;
+    property    Scraper: TAbstractScraper read FScraper write SetScraper;
+    property    AuthenticationStatus : TAuthStatus read FAuthStatus;
+    property    ImageMethod: TImageMethod read FImageMethod write FImageMethod;
   end;
 
   TClientSessionList = class(TList)
@@ -161,12 +214,33 @@ type
     property Items[Index: Integer]: TClientSession read GetItems; default;
   end;
 
+var
+  ClientSessionClass: TClientSessionClass = TClientSession;
+
 function FindHeader(List: TStrings; Header: string; var Value: string): Boolean;
-  
+function GetClientSession(id:string):TClientSession;
+
+procedure Cleanup;
+
 implementation
 
 uses
   ThinVnc.Capture;
+
+var
+  gSessionList : TList;
+
+function GetClientSession(id:string):TClientSession;
+var
+  n : Integer;
+begin
+  result:=nil;
+  for n := 0 to gSessionList.Count - 1 do
+    if not TClientSession(gSessionList[n]).IsGarbage and (TClientSession(gSessionList[n]).FId=Id) then begin
+      result := TClientSession(gSessionList[n]);
+      break;
+    end;
+end;
 
 function FindHeader(List: TStrings; Header: string; var Value: string): Boolean;
 var
@@ -192,37 +266,44 @@ begin
   end;
 end;
 
+procedure Cleanup;
+begin
+end;
+
 { TClientSession }
 
-constructor TClientSession.Create(AMirrorManager: TMirrorManager;APolled:Boolean);
+constructor TClientSession.Create(APolled:Boolean);
 var
   Log : ILogger;
   n : Integer;
+  Guid : TGuid;
 begin
   Log := TLogger.Create(self,'Create');
-  FMirrorManager := AMirrorManager;
   FSessionWindowList := TSessionWindowList.Create;
-  FUseJpeg := true;
+  SetScraper(CaptureThread.Scraper);
   FEmbeddedImage := true;
   FBinaryImages := false;
   FJpgQuality:=85;
-  FJpgPixelFormat:=jf24Bit;
   FPolled:=APolled;
   FEnableEvent := TEvent.Create(nil, true,false,'');
+  FJsonEvent := TEvent.Create(nil, true,false,'');
   FCursorWindow := TCursorWindow.Create;
-  FKeyDownList := TList.Create;
-  FKeyCs := TCriticalSection.Create;
   FIsLocal := True;
 
   FActiveMonitor := 0;
-  for N := 0 to Screen.MonitorCount - 1 do
-    if Screen.Monitors[n].Primary then begin
+  for N := 0 to MyScreen.MonitorCount - 1 do
+    if MyScreen.Monitors[n].Primary then begin
       FActiveMonitor:=N;
       break;
     end;
 
   Update;
-  gCaptureThread.AddSession(Self);
+  FAuthDigestServer := TAuthDigestServer.Create;
+  FLastCaptureIndex:=-1;
+  gSessionList.Add(self);
+  CoCreateGuid(Guid);
+  FId:=GuidToString(Guid);
+  FLock := TCriticalsection.Create;
 end;
 
 destructor TClientSession.Destroy;
@@ -230,34 +311,34 @@ var
   Log : ILogger;
 begin
   Log:=TLogger.Create(Self,Format('Destroy: %d',[Integer(self)]));
-  if assigned(gCaptureThread) then
-    gCaptureThread.RemoveSession(Self);
-  FlushKeyboard(true);
+  gSessionList.Remove(self);
+  CaptureThread.RemoveSession(Self);
+  //FlushKeyboard(true);
   Active := False;
+  if FJsonEvent <> nil then
+  begin
+    FJsonEvent.SetEvent;
+    Sleep(20); // Makes sure WaitForJson ends
+    FreeAndNil(FJsonEvent);
+  end;
   OnSendScreen := nil;
   OnSendCmd := nil;
   OnSendBuf := nil;
   if assigned(FInputQueue) then
     FInputQueue.Terminate;
   FreeAndNil(FCursorWindow);
-  FreeAndNil(FKeyDownList);
-  FreeAndNil(FKeyCs);
+  if Assigned(FSendThread) then begin
+    FSendThread.Terminate;
+    FSendThread.Continue;
+    FSendThread := nil;
+  end;
+  FreeAndNil(FAuthDigestServer);
   FreeAndNil(FSessionWindowList);
   FreeAndNil(FEnableEvent);
+  FreeAndNil(FLock);
   inherited;
 end;
 
-procedure TClientSession.FlushKeyboard(force:Boolean);
-begin
-  FKeyCs.Enter;
-  try
-    if (FKeyDownList.Count>0) and (Force or (DatetimeToTimestamp(Now-FLastKeytime).time>2000))  then
-      while FKeyDownList.Count>0 do
-        ProcessKeyboardInput(Word(FKeyDownList[FKeyDownList.Count-1]),false);
-  finally
-    FKeyCs.Leave;
-  end;
-end;
 
 function TClientSession.IsGarbage: Boolean;
 begin
@@ -274,6 +355,11 @@ begin
   end;
 end;
 
+class function TClientSession.IsValid(AClientSession: TClientSession): Boolean;
+begin
+  result:=gSessionList.IndexOf(AClientSession)>-1
+end;
+
 function TClientSession.RefreshWindows:boolean;
  function GetSignature(List:TSessionWindowList):string;
   var
@@ -284,8 +370,8 @@ function TClientSession.RefreshWindows:boolean;
     for I := 0 to List.Count - 1 do
     begin
       sw := List[I];
-      result:=result+Format('h:%d-%d-%d-%d-%d;',[sw.Handle,sw.BoundsRect.Left,sw.BoundsRect.Right,
-        sw.BoundsRect.Right,sw.BoundsRect.Bottom]);
+      result:=result+Format('h:%d-%d-%d-%d-%d-%s;',[sw.Handle,sw.BoundsRect.Left,sw.BoundsRect.Right,
+        sw.BoundsRect.Right,sw.BoundsRect.Bottom,BoolToStr(sw.IsMasked,true)]);
     end;
   end;
 
@@ -297,11 +383,13 @@ var
 begin
   if FForceRefresh then FSessionWindowList.Clear;
   FForceRefresh:=false;
+  Result := False;
+  if FScraper = nil then Exit;
 
   for n := FSessionWindowList.Count - 1 downto 0 do begin
     found:=false;
-    for m := 0 to FMirrorManager.MirrorList.Count - 1 do begin
-      wm := FMirrorManager.MirrorList[m];
+    for m := 0 to FScraper.MirrorList.Count - 1 do begin
+      wm := FScraper.MirrorList[m];
       if wm.Handle=FSessionWindowList[n].Handle then begin
         Found:=true;
         break;
@@ -311,11 +399,12 @@ begin
     else FSessionWindowList[n].UpdateBitmap;
   end;
 
-  for n := 0 to FMirrorManager.MirrorList.Count - 1 do begin
-    wm := FMirrorManager.MirrorList[n];
+  for n := 0 to FScraper.MirrorList.Count - 1 do begin
+    wm := FScraper.MirrorList[n];
     found:=false;
     for m := 0 to FSessionWindowList.Count - 1 do begin
-      if wm.Handle=FSessionWindowList[m].Handle then begin
+      sw:=FSessionWindowList[m];
+      if wm.Handle=sw.Handle then begin
         Found:=true;
         break;
       end;
@@ -333,18 +422,28 @@ begin
 end;
 
 function TClientSession.ProcessDifferences:Boolean;
-var
-  Log:ILogger;
 begin
-  Log:=TLogger.Create(self,'ProcessDifferences',true);
   result:=False;
+  AccumChangedRgn;
   if FEnableEvent.Waitfor(0)=wrSignaled then begin
+    if ForceDisconnect then begin
+      SendScreen('{"status":9,"windows": []}');
+      FActive:=False;
+      FGarbage:=True;
+      ForceDisconnect:=False;
+      result:=true;
+      exit;
+    end;
+
     result:=GetDifferences;
     if result then begin
       FEnableEvent.ResetEvent;
-      if not Assigned(OnSendScreen) then exit;
+      //if FJsonEvent.WaitFor(0) = wrSignaled then Exit;
+      //if not Assigned(OnSendScreen) then exit;
       SendScreen(GetJson);
+      if BinaryImages then SendImages;
     end;
+    ClearChangedRgn;
   end else LogInfo('ProcessDifferences FEnableEvent not enabled');
 end;
 
@@ -352,25 +451,36 @@ function TClientSession.GetDifferences:Boolean;
 var
   sw : TSessionWindow;
   m : Integer;
-  rc : Boolean;
-  Log:ILogger;
+  rc,forcerefresh : Boolean;
 begin
-  Log:=TLogger.Create(self,'GetDifferences',true);
+  result:=false;
+  if FScraper = nil then Exit;
+  forcerefresh:=FForceRefresh;
   result:=RefreshWindows;
 
-  for m := FSessionWindowList.Count - 1 downto 0 do begin
-    sw:=TSessionWindow(FSessionWindowList[m]);
-    if not sw.Active then continue;
-    if (Length(FProcessIds)>0) and not IsProcessInList(sw.ProcessId) then continue;
-    rc:=sw.CaptureDifferences(FActiveMonitor);
-    result:=result or rc;
-  end;
+  if (FLastCaptureIndex<>FScraper.CaptureIndex) then
+    for m := FSessionWindowList.Count - 1 downto 0 do begin
+      sw:=TSessionWindow(FSessionWindowList[m]);
+      if not sw.Active then continue;
+      if (Length(FProcessIds)>0) and not IsProcessInList(sw.ProcessId) then continue;
+      rc:=sw.CaptureDifferences(FChangedRgn,FActiveMonitor,forcerefresh);
+      result:=result or rc;
+    end;
 
-  rc:=FCursorWindow.Capture(FResetRemotePointer);
-  FResetRemotePointer:=false;
-  if FRemotePointer or FCursorWindow.ShapeChanged then begin
-    result:=result or rc or FCursorWindow.ShapeChanged;
+  if (FScraper <> nil) and FScraper.SendCursor then begin
+    rc:=FCursorWindow.Capture(FResetRemotePointer);
+    FResetRemotePointer:=false;
+    if FRemotePointer or FCursorWindow.ShapeChanged then begin
+      result:=result or rc or FCursorWindow.ShapeChanged;
+    end;
   end;
+  LogInfo(Format('GetDifferences result: %s',[BoolToStr(result,true)]));
+end;
+
+procedure TClientSession.GetCursor(var cur:string;var curX,curY:Integer);
+begin
+  if (FScraper <> nil) and FScraper.SendCursor then
+    FCursorWindow.GetCursor(cur,curX,curY);
 end;
 
 function TClientSession.GetJson(path: string): string;
@@ -380,17 +490,26 @@ var n,curX,curY : Integer;
 begin
   Log := TLogger.Create(Self,'GetJson');
   json:='';
+  FLastCaptureIndex:=FScraper.CaptureIndex;
   for n := 0 to FSessionWindowList.Count - 1 do begin
     if FSeamless and FSessionWindowList[n].IsShellWindow then continue;
     if not IsProcessInList(FSessionWindowList[n].ProcessId) then continue;
     if json<>'' then json:=json+','+#13#10;
-    json:=json+#9+FSessionWindowList[n].getJson(path,EmbeddedImage,FBinaryImages,UseJpeg,JpgQuality,JpgPixelFormat,JpgGrayScale);
+    json:=json+#9+FSessionWindowList[n].getJson(path,EmbeddedImage,FBinaryImages,FImageMethod,JpgQuality,JpgPixelFormat,JpgGrayScale);
   end;
-  if FRemotePointer then
-    json:=json+','+#13#10+FCursorWindow.getJson;
-  FCursorWindow.GetCursor(cur,curX,curY);
-  result:=Format('{"windows": ['+#13#10+json+#13#10+'],"status:":1,"cursor":"%s","cursorX":%d,"cursorY":%d}',
-        [cur,curX,curY]);
+
+  cur:='Default';
+  curX:=0;
+  curY:=0;
+
+  if (FScraper <> nil) and FScraper.SendCursor then begin
+    if FRemotePointer then
+      json:=json+','+#13#10+FCursorWindow.getJson;
+  end;
+
+  GetCursor(cur,curX,curY);
+  result:=Format('{"status":1,"desktopWidth":%d,"desktopHeight":%d,"cursor":"%s","cursorX":%d,"cursorY":%d,"windows": ['+#13#10+json+#13#10+']}',
+        [Scraper.DVWidth(ActiveMonitor),Scraper.DVHeight(ActiveMonitor),cur,curX,curY]);
 end;
 
 function TClientSession.GetActiveMonitor: Integer;
@@ -401,12 +520,16 @@ end;
 function TClientSession.GetConnectStatus: AnsiString;
 var
   jsObj: TlkJSONobject;
+  AuthType : TAuthenticationType;
+  AuthRealm : string;
 begin
+//  if not FPolled then FAuthStatus:=asAuthNotRequired;
   jsObj :=TlkJSONobject.Create();
   try
     jsObj.Add('cmd', 'connectStatus');
-    jsObj.Add('id', Integer(self));
-    jsObj.Add('status', FConnectStatus<>csNone);
+    jsObj.Add('id', FId);
+    jsObj.Add('status', Integer(FConnectStatus));
+    jsObj.Add('authStatus', Integer(FAuthStatus));
     if FConnectError <> '' then
       jsObj.Add('errormsg', FConnectError);
     jsObj.Add('dateTime',FormatDateTime('yyyy-mm-dd hh:mm:ss:zzz',Now));
@@ -416,12 +539,74 @@ begin
   end;
 end;
 
+procedure TClientSession.SendImages;
+var n,m : Integer;
+  bmpp : TBmpPart;
+  ms : TStringStream;
+  Log : Ilogger;
+begin
+  Log := TLogger.Create(Self,'SendImages');
+  for n := 0 to FSessionWindowList.Count - 1 do begin
+    if FSeamless and FSessionWindowList[n].IsShellWindow then continue;
+    if not IsProcessInList(FSessionWindowList[n].ProcessId) then continue;
+    for m:=0 to FSessionWindowList[n].DiffBmpList.Count-1 do begin
+      bmpp:=FSessionWindowList[n].DiffBmpList[m];
+      bmpp.GetStream(FImageMethod,JpgQuality,JpgPixelFormat,JpgGrayScale);
+      bmpp.Stream.Seek(0,0);
+      ms:=TStringStream.Create(bmpp.id +':');
+      try
+        ms.Seek(ms.Size,0);
+        ms.CopyFrom(bmpp.Stream,bmpp.Stream.size);
+        ms.Seek(0,0);
+        SendBuffer(ms);
+        LogInfo(Format('SendImage id=%s, size:%d',[bmpp.id,bmpp.Stream.size]));
+      finally
+        ms.Free;
+      end;
+    end;
+    FSessionWindowList[n].ApplyDifferences;
+  end;
+end;
 
 procedure TClientSession.Refresh;
 begin
   FForceRefresh:=true;
+  FLastCaptureIndex:=-1;
+  FResetRemotePointer:=true;
 end;
 
+procedure TClientSession.AccumChangedRgn;
+var
+  n : Integer;
+  Rgn : HRGN;
+begin
+  if FScraper = nil then Exit;
+  if FScraper.ChangedRgn=0 then exit;
+  
+  if FChangedRgn=0 then
+    FChangedRgn:=CreateRectRgn(0,0,0,0);
+
+  CombineRgn(FChangedRgn, FScraper.ChangedRgn,FChangedRgn, RGN_OR);
+end;
+
+procedure TClientSession.ClearChangedRgn;
+var
+  Log : ILogger;
+begin
+  if FChangedRgn<>0 then begin
+    DeleteObject(FChangedRgn);
+    FChangedRgn:=0;
+  end;
+end;
+
+procedure TClientSession.AckReceived(APacketNumber:Cardinal);
+var
+  Log:ILogger;
+begin
+  Log:=TLogger.Create(self,Format('AckReceived: %d',[APacketNumber]));
+  If Assigned(FSendThread) and (FSendThread.LastPacketNumber=APacketNumber) then
+    FEnableEvent.SetEvent;
+end;
 
 procedure TClientSession.Enable;
 var
@@ -431,6 +616,100 @@ begin
   FEnableEvent.SetEvent;
 end;
 
+function TClientSession.ExecCommandLineOrder(jsObj: TlkJSONobject): AnsiString;
+    function GetVk(C:Char):word;
+    begin
+      result:=VkKeyScanEx(C,0);
+    end;
+var
+  jsResp: TlkJSONobject;
+  Ok: Boolean;
+  cliType, cliAction, cliText, cliLineMode: AnsiString;
+begin
+  Ok := False;
+  jsResp := TlkJSONobject.Create;
+  try
+    jsResp.add('cmd', 'cli');
+    try
+      if jsObj.Field['type'] <> nil then
+      begin
+        cliType := jsObj.Field['type'].Value;
+        jsResp.add('type', cliType);
+        if SameText(cliType, 'clipboard') then
+        begin
+          cliAction := jsObj.Field['action'].Value;
+          jsResp.add('action', cliAction);
+          if SameText(cliAction, 'copy') then
+          begin
+            Clipboard.Open;
+            try
+              if Clipboard.HasFormat(CF_TEXT) then
+                cliText := Clipboard.AsText else
+                cliText := '';
+            finally
+              Clipboard.Close;
+            end;
+          end else begin
+            cliText := jsObj.Field['textdata'].Value;
+            cliLineMode := jsObj.Field['linemode'].Value;
+            if cliLineMode = 'CR' then
+              cliText := StringReplace(cliText, #10, #13#10, [rfReplaceAll]);
+            Clipboard.Open;
+            try
+              Clipboard.AsText := cliText;
+            finally
+              Clipboard.Close;
+            end;
+            ProcessKeyboardInput(VK_CONTROL, True);
+            ProcessKeyboardInput(Ord('V'), True);
+            Sleep(10);
+            ProcessKeyboardInput(VK_CONTROL, False);
+            ProcessKeyboardInput(Ord('V'), False);
+            cliText := '';
+          end;
+          Ok := True;
+          jsResp.add('text', cliText);
+        end;
+      end;
+      if not Ok then Abort;
+    except
+      on E: Exception do
+      begin
+        jsResp.Add('error', True);
+      end;
+    end;
+    Result := TlkJSON.GenerateText(jsResp);
+  finally
+    jsResp.Free;
+  end;
+end;
+
+procedure TClientSession.SendCmd(AText: AnsiString);
+var
+  Log : ILogger;
+begin
+  Log:=TLogger.Create(Self,'SendCmd');
+  Log.LogInfo(AText);
+  try
+    if FPolled then begin
+      if Assigned(OnSendCmd) then
+        try
+          OnSendCmd(AText,1);
+        except
+          OnSendCmd:=nil;
+        end;
+    end else begin
+      if not assigned(FSendThread) then begin
+        FSendThread:=TSendThread.Create;
+        FSendThread.OnEmptyQueue:=OnEmptyQueue;
+      end;
+      FSendThread.SendCmd(OnSendCmd,AText);
+    end;
+  except
+    On E:Exception do
+      LogException (E.Message);
+  end;
+end;
 
 procedure TClientSession.SendScreen(AText: AnsiString);
 var
@@ -438,19 +717,50 @@ var
 begin
   Log:=TLogger.Create(Self,'SendScreen');
   try
-      Log.LogInfo('Assigned(OnSendScreen)='+BoolToStr(Assigned(OnSendScreen),true));
+    if FPolled then begin
       if Assigned(OnSendScreen) then
-      try
-        OnSendScreen(AText,1);
-      except
-        OnSendScreen:=nil;
+      begin
+        try
+          OnSendScreen(AText,1);
+        except
+          OnSendScreen:=nil;
+        end;
+      end else begin
+        FJsonText := AText;
+        FJsonEvent.SetEvent;
       end;
+    end else begin
+      if not assigned(FSendThread) then begin
+        FSendThread:=TSendThread.Create;
+        FSendThread.OnEmptyQueue:=OnEmptyQueue;
+      end;
+      Log.LogInfo(Format('Sending Bytes:%d',[Length(AText)]));
+      FSendThread.SendCmd(OnSendScreen,AText);
+    end;
+  except
+    on E:Exception do
+      LogException (E.Message);
+  end;
+end;
+
+procedure TClientSession.SendBuffer(AStream: TStream);
+var
+  Text : Ansistring;
+begin
+  try
+    AStream.Seek(0,0);
+    SetLength(Text,AStream.Size);
+    AStream.Read(Text[1],AStream.Size);
+    if not assigned(FSendThread) then begin
+      FSendThread:=TSendThread.Create;
+      FSendThread.OnEmptyQueue:=OnEmptyQueue;
+    end;
+    FSendThread.SendCmd(OnSendBuf,Text);
   except
     On E:Exception do
       LogException (E.Message);
   end;
 end;
-
 
 procedure TClientSession.OnEmptyQueue(Sender:TObject);
 begin
@@ -458,16 +768,43 @@ begin
 end;
 
 procedure TClientSession.SetActive(const Value: Boolean);
+var
+  Log : ILogger;
 begin
-  FActive := Value;
-  if FActive then
-    gCaptureThread.Resume;
+  Log:=TLogger.Create(Self,'SetActive');
+  if Value<>FActive then begin
+    FActive := Value;
+    if Value then
+      CaptureThread.AddSession(Self)
+    else CaptureThread.RemoveSession(Self);
+  end;
 end;
 
 procedure TClientSession.SetDestAddr(const Value: string);
+var I, P: Integer; A: string;
 begin
-  FDestAddr := '';
-  FIsLocal := true;
+  FConnectError:='';
+  FDestAddr := Trim(Value);
+  if FDestAddr = '' then FIsLocal := True else
+  begin
+    I := Pos(':', FDestAddr);
+    if I = 0 then
+    begin
+      A := FDestAddr;
+      P := 8080;
+    end else begin
+      A := Copy(FDestAddr, 1, I - 1);
+      P := StrToIntDef(Copy(FDestAddr, I + 1, MaxInt), 8080);
+      if (P <= 0) or (P > 65535) then P := 8080;
+    end;
+    FIsLocal := IsThisComputer(A);
+    FDestAddr := Format('%s:%d', [A, P]);
+  end;
+end;
+
+procedure TClientSession.SetGarbage;
+begin
+  FGarbage:=true;
 end;
 
 procedure TClientSession.SetJpgGrayscale(const Value: boolean);
@@ -494,238 +831,94 @@ begin
   end;
 end;
 
+procedure TClientSession.SetScraper(const Value: TAbstractScraper);
+begin
+  FScraper := Value;
+  if FScraper<>nil then begin
+    FImageMethod := FScraper.ImageMethod;
+    FJpgPixelFormat:=FScraper.JpgPixelFormat;
+    FRemotePointer:=FScraper.RemotePointer;
+    FResetRemotePointer:=FRemotePointer;
+  end;
+end;
+
+function TClientSession.TryLock: Boolean;
+begin
+  result:=FLock.TryEnter;
+end;
+
+procedure TClientSession.Lock;
+begin
+  FLock.Enter;
+end;
+
+procedure TClientSession.Unlock;
+begin
+  FLock.Release;
+end;
+
 procedure TClientSession.Update;
 begin
   FLastUsed:=Now;
 end;
 
-function TClientSession.PressFunctionKey(Func:string):Boolean;
-var Log :ILogger;
+function TClientSession.WaitForJson(out output: AnsiString): Boolean;
+var
+  Log : ILogger;
 begin
-  if func='CtrlAltDel' then begin
-    FlushKeyboard(true);
-      KeysDown([VK_CONTROL,VK_SHIFT,VK_ESCAPE]);
-      Sleep(50);
-      KeysUp([VK_ESCAPE,VK_SHIFT,VK_CONTROL]);
-  end else if func='AltTab' then begin
-    KeysDown([VK_MENU,VK_TAB]);
-    KeysUp([VK_TAB]);
-  end else if func='AltShiftTab' then begin
-    KeysDown([VK_MENU,VK_SHIFT,VK_TAB]);
-    KeysUp([VK_SHIFT,VK_TAB]);
-  end else if func='ShiftCtrlEsc' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_CONTROL,VK_SHIFT,VK_ESCAPE]);
-    KeysUp([VK_ESCAPE]);
-  end else if func='CtrlEsc' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_CONTROL,VK_ESCAPE]);
-    KeysUp([VK_ESCAPE,VK_CONTROL]);
-  end else if func='AltEsc' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_MENU,VK_ESCAPE]);
-    KeysUp([VK_ESCAPE]);
-  end else if func='LeftWin' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_LWIN]);
-    KeysUp([VK_LWIN]);
-  end else if func='RightWin' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_RWIN]);
-    KeysUp([VK_RWIN]);
-  end else if func='PrtScr' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_SNAPSHOT]);
-    KeysUp([VK_SNAPSHOT]);
-  end else if func='AltPrtScr' then begin
-    FlushKeyboard(true);
-    KeysDown([VK_MENU]);
-    KeysDown([VK_SNAPSHOT]);
-    KeysUp([VK_SNAPSHOT,VK_MENU]);
-  end;
-  result:=true;
+  Log := TLogger.Create(self, 'WaitForJson : ' + IntToStr(Integer(self)));
+  FJsonText:='';
+  FJsonEvent.ResetEvent;
+  Enable;
+  LogInfo('WaitForEvent(FJsonEvent): '+IntToStr(Integer(FJsonEvent)));
+  result:=FJsonEvent.WaitFor(30000)=wrSignaled;
+//  result:=WaitForEvent(FJsonEvent,10000)=wrSignaled;
+  output:=FJsonText;
 end;
 
-function TClientSession.KeysDown(vks:array of integer):boolean;
-var
-  n,sc : integer;
+procedure TClientSession.ProcessKeyboardInput(key,ch: word; Down:boolean);
 begin
-  for n := 0 to Length(vks) - 1 do begin
-    sc:=MapVirtualKey(vks[n],0);
-    keybd_event(vks[n],sc, 0,0);
-    AddKeyDownToList(vks[n]);
-  end;
-  result:=true;
-end;
-
-function TClientSession.KeysUp(vks:array of integer):boolean;
-var
-  n,sc : integer;
-begin
-  for n := 0 to Length(vks) - 1 do begin
-    sc:=MapVirtualKey(vks[n],0);
-    keybd_event(vks[n],sc, KEYEVENTF_KEYUP,0);
-    FKeyDownList.Remove(TObject(vks[n]));
-  end;
-  result:=true;
+  if not FKbdControl then exit;
+  FScraper.ProcessKeyboardInput(key,ch, Down);
 end;
 
 procedure TClientSession.ProcessKeyboardInput(key: word; Down:boolean);
-  procedure DumpKeys;
-  var n : Integer;
-    S : string;
-  begin
-    S:='';
-    for n := 0 to FKeyDownList.Count - 1 do begin
-      if S<>'' then S:=S+',';
-      S:=S+IntToStr(Integer(FKeyDownList[n]));
-    end;
-    LogInfo(Format('Keys Pressed: [%s]',[S]));
-  end;
-  
-  function AreVkInList(vks:array of Integer):Boolean;
-  var n,m : Integer;
-    found : Boolean;
-  begin
-    result:=false;
-    if length(vks)>FKeyDownList.Count then exit;
-    
-    found:=false;
-    for n := 0 to FKeyDownList.Count - 1 do begin
-      found:=false;
-      for m := 0 to Length(vks) - 1 do
-        if vks[m]=Integer(FKeyDownList[n]) then begin
-          found:=true;
-          break;
-        end;
-      if not found then break;
-    end;
-    result:=found;
-  end;
-
-  procedure RemoveKeys(vks:array of Integer);
-  var n,m : Integer;
-  begin
-    for n :=FKeyDownList.Count - 1 downto 0 do begin
-      for m := 0 to Length(vks) - 1 do
-        if Integer(FKeyDownList[n]) = vks[m] then begin
-          FKeyDownList.delete(n);
-          break;
-        end;
-    end;
-  end;
-  
-  function ValidCombination:Boolean;
-    function GetVk(C:Char):word;
-    begin
-      result:=VkKeyScanEx(C,0);
-    end;
-  begin
-    result:=false;
-    DumpKeys;
-    if AreVkInList([VK_MENU,VK_PRIOR]) then begin
-      RemoveKeys([VK_PRIOR]);
-      result:=PressFunctionKey('AltTab');
-    end else if AreVkInList([VK_MENU,VK_NEXT]) then begin
-      RemoveKeys([VK_NEXT]);
-      result:=PressFunctionKey('AltShiftTab');
-    end else if AreVkInList([VK_CONTROL,VK_MENU,VK_INSERT]) then begin
-      RemoveKeys([VK_CONTROL,VK_MENU,VK_INSERT]);
-      result:=PressFunctionKey('AltEsc');
-    end else if AreVkInList([VK_CONTROL,VK_MENU,VK_HOME]) then begin
-      RemoveKeys([VK_CONTROL,VK_MENU,VK_HOME]);
-      result:=PressFunctionKey('CtrlEsc');
-    end else if AreVkInList([VK_CONTROL,VK_MENU,VK_END]) then begin
-      RemoveKeys([VK_CONTROL,VK_MENU,VK_END]);
-      result:=PressFunctionKey('CtrlAltDel');
-    end else if AreVkInList([VK_CONTROL,GetVk('C')]) then
-    else if AreVkInList([VK_CONTROL,GetVk('X')]) then
-    else if AreVkInList([VK_CONTROL,GetVk('V')]) then
-    else if AreVkInList([VK_CONTROL,GetVk('Z')]) then;
-  end;
-  function IsExtendedVK(vk: Integer): Boolean;
-  begin
-    Result := (vk = VK_LEFT)
-           or (vk = VK_RIGHT)
-           or (vk = VK_UP)
-           or (vk = VK_DOWN)
-           or (vk = VK_SCROLL)
-           or (vk = VK_CAPITAL)
-           or (vk = VK_NUMLOCK)
-           or (vk = VK_HOME)
-           or (vk = VK_END)
-           or (vk = VK_PRIOR)
-           or (vk = VK_NEXT)
-           or (vk = VK_INSERT)
-           or (vk = VK_DELETE)
-  end;
-var
-  sc, flags: Integer;
 begin
-  SwitchToActiveDesktop;
-  FKeyCs.Enter;
-  try
-    FLastKeytime := Now;
-    LogInfo(Format('ProcessKeyboardInput key:%d down:%s',[key,BoolToStr(down,true)]));
-    if down then begin
-      AddKeyDownToList(key);
-      if ValidCombination then exit;
-    end else FKeyDownList.Remove(TObject(key));
-  finally
-    FKeyCs.Leave;
-  end;
-  sc:=MapVirtualKey(key,0);
-  if down then flags := 0
-  else flags := KEYEVENTF_KEYUP;
-  if IsExtendedVK(key) then flags := flags or KEYEVENTF_EXTENDEDKEY;
-  keybd_event(key, sc, flags, 0);
+  if not FKbdControl then exit;
+  FScraper.ProcessKeyboardInput(key,0, Down);
 end;
 
-procedure TClientSession.AddKeyDownToList(key:word);
-begin
-  if FKeyDownList.IndexOf(TObject(key))=-1 then
-    FKeyDownList.Add(TObject(key));
-end;
-
-procedure TClientSession.ProcessMouseInput(X, Y, Btn: Integer; action: string);
-var
-  flags : DWORD;
-  Log : ILogger;
+procedure TClientSession.ProcessMouseInput(X, Y,delta, Btn: Integer; action: string);
 begin
   if not FMouseControl then exit;
-  SwitchToActiveDesktop;
-
-  if action<>'move' then
-    Log := TLogger.Create(Self,'ProcessMouseInput action='+action);
-
-  X:=round(X/(Screen.width)*65535);
-  Y:=round(Y/(Screen.Height)*65535);
-  flags:=0;
-  if action='move' then begin
-    mouse_event(MOUSEEVENTF_MOVE or MOUSEEVENTF_ABSOLUTE,X,Y,0,0);
-    exit;
-  end;
-
-  if action='up' then begin
-    case btn of
-      0 : flags:=MOUSEEVENTF_LEFTUP;
-      1 : flags:=MOUSEEVENTF_MIDDLEUP;
-      2 : flags:=MOUSEEVENTF_RIGHTUP;
-    end;
-  end else if action='down' then begin
-    case btn of
-      0 : flags:=MOUSEEVENTF_LEFTDOWN;
-      1 : flags:=MOUSEEVENTF_MIDDLEDOWN;
-      2 : flags:=MOUSEEVENTF_RIGHTDOWN;
-    end;
-  end;
-  flags:=flags or MOUSEEVENTF_MOVE or MOUSEEVENTF_ABSOLUTE;
-  mouse_event(flags,X,Y,0,0);
+  if FScraper = nil then Exit;
+  FScraper.ProcessMouseInput(X, Y,delta, Btn,action);
 end;
 
 function TClientSession.ProcessPacket(JsonText: Ansistring):AnsiString;
+var
+  jsObj:TlkJSONobject;
+  Log : ILogger;
+begin
+  Log := TLogger.Create(Self,'ProcessPacket');
+  result:='';
+  jsObj:=TlkJSON.ParseText(JsonText) as TlkJSONobject;
+  if not Assigned(jsObj) then exit;
+  try
+    result:=ProcessPacket(jsObj);
+    if result<>'' then
+      SendCmd(result);
+  finally
+    FreeAndNil(jsObj);
+  end;
+end;
+
+function TClientSession.ProcessPacket(jsObj: TlkJSONobject):AnsiString;
   procedure SetParams(jsObj:TlkJSONobject);
+  var
+    Log : ILogger;
   begin
+    Log := TLogger.Create(Self,'SetParams');
     if (jsObj.IndexOfName('mouseControl')<>-1) and (FTicket='') then
       FMouseControl:=jsObj.Field['mouseControl'].Value;
     if (jsObj.IndexOfName('kbdControl')<>-1) and (FTicket='') then
@@ -736,75 +929,116 @@ function TClientSession.ProcessPacket(JsonText: Ansistring):AnsiString;
       JpgQuality:=jsObj.Field['quality'].Value;
     if jsObj.IndexOfName('pixelFormat')<>-1 then
       JpgPixelFormat:=jsObj.Field['pixelFormat'].Value;
-    if jsObj.IndexOfName('useJpeg')<>-1 then
-      FUseJpeg:=jsObj.Field['useJpeg'].Value;
+    if jsObj.IndexOfName('imageMethod')<>-1 then
+      ImageMethod:=TImageMethod(jsObj.Field['imageMethod'].Value);
     if jsObj.IndexOfName('embeddedImage')<>-1 then
       FEmbeddedImage:=jsObj.Field['embeddedImage'].Value;
+    if jsObj.IndexOfName('binaryImages')<>-1 then
+      FBinaryImages:=jsObj.Field['binaryImages'].Value;
+    if jsObj.IndexOfName('authorization')<>-1 then
+      FAuthorization:=jsObj.Field['authorization'].Value;
     if jsObj.IndexOfName('remotePointer')<>-1 then begin
       FRemotePointer:=jsObj.Field['remotePointer'].Value;
       FResetRemotePointer:=FRemotePointer;
     end;
+    if (jsObj.IndexOfName('id')<>-1) and (Length(jsObj.Field['id'].Value)>1) then
+      FId:=jsObj.Field['id'].Value;
     if jsObj.IndexOfName('monitor')<>-1 then begin
-      FActiveMonitor:=jsObj.Field['monitor'].Value;
+      FActiveMonitor:=RealMonitorIndex(jsObj.Field['monitor'].Value);
       Refresh;
     end;
     if jsObj.IndexOfName('destAddr')<>-1 then
       SetDestAddr(jsObj.Field['destAddr'].Value);
-    if jsObj.IndexOfName('ticket')<>-1 then begin
-      FTicket:=jsObj.Field['ticket'].Value;
-      if (FTicket<>'') then FRemotePointer:=true;
+    if jsObj.IndexOfName('clientType')<>-1 then begin
+      FClientType:=TClientType(jsObj.Field['clientType'].Value);
+        end;
+        if jsObj.IndexOfName('authByPass')<>-1 then begin
+      FauthByPass:=jsObj.Field['authByPass'].Value;
     end;
   end;
 var
-  jsObj:TlkJSONobject;
   cmd : string;
-  Log : ILogger;
   Headers: TStringList;
   Code: Integer;
-  Body: AnsiString;
+  Body,lUser: string;
+  Log : ILogger;
 begin
-  Log := TLogger.Create(Self,'ProcessPacket');
-  result:='';
-  jsObj:=TlkJSON.ParseText(JsonText) as TlkJSONobject;
-  if not Assigned(jsObj) then exit;
-  try
-    if jsObj.IndexOfName('cmd') < 0 then exit;
-    cmd:=jsObj.Field['cmd'].Value;
-    LogInfo('Command: '+cmd);
-    if Sametext(cmd,'start') then begin
-      SetParams(jsObj);
-      Refresh;
-      Active:=true;
-      result:=GetSessionStatus;
-    end else if Sametext(cmd,'stop') then begin
-      Active:=false;
-      FlushKeyboard(true);
-      result:=GetSessionStatus;
-    end else if Sametext(cmd,'disconnect') then begin
-      FActive:=False;
-      FGarbage:=True;
-      result:=GetSessionStatus;
-    end else if Sametext(cmd,'refresh') then
-      Refresh
-    else if Sametext(cmd,'queryStatus') then
-      result:=GetSessionStatus
-    else if Sametext(cmd,'params') then begin
-      SetParams(jsObj);
-      result:=GetSessionStatus;
-    end else if Sametext(cmd,'mouse') then
-      InputQueue.AddBuffer(JsonText)
-    else if Sametext(cmd,'keyb') then
-      InputQueue.AddBuffer(JsonText)
-    else if Sametext(cmd,'connect') then begin
-      SetParams(jsObj);
-        FConnectStatus := csLocal;
-        FConnectError := '';
-        Refresh;
-        Active:=true;
-      result:=GetConnectStatus;
+  Log := TLogger.Create(Self,'ProcessPacket 2');
+  result:='{}';
+  if jsObj.IndexOfName('cmd') < 0 then exit;
+  cmd:=jsObj.Field['cmd'].Value;
+  LogInfo('Command: '+cmd);
+  if Sametext(cmd,'start') then begin
+    SetParams(jsObj);
+    Refresh;
+    Active:=true;
+    result:=GetSessionStatus;
+  end else if Sametext(cmd,'stop') then begin
+    Active:=false;
+    //FlushKeyboard(true);
+    result:=GetSessionStatus;
+  end else if Sametext(cmd,'disconnect') then begin
+    FActive:=False;
+    FGarbage:=True;
+    result:=GetSessionStatus;
+  end else if Sametext(cmd,'refresh') then begin
+    Refresh;
+    Enable;
+  end else if Sametext(cmd,'queryStatus') then
+    result:=GetSessionStatus
+  else if Sametext(cmd,'ack') then begin
+    AckReceived(jsObj.Field['number'].Value);
+    result:='';
+    exit;
+  end else if Sametext(cmd,'ready') then
+    enable
+  else if Sametext(cmd,'showWindow') then begin
+    ShowWindow(jsObj.Field['wnd'].Value,SW_RESTORE);
+  end else if Sametext(cmd,'switchSeamless') then begin
+    FSeamLess:=not FSeamLess;
+    result:=GetSessionStatus;
+    Refresh;
+  end else if Sametext(cmd,'authenticate') then begin
+    FAuthorization:=jsObj.Field['authorization'].Value;
+    result:=GetConnectStatus;
+  end else if Sametext(cmd,'params') then begin
+    SetParams(jsObj);
+    result:=GetSessionStatus;
+  end else if Sametext(cmd,'mouse') then begin
+    InputQueue.AddBuffer(TlkJSON.GenerateText(jsObj));
+    if not FPolled then result:='';
+  end else if Sametext(cmd,'keyb') then begin
+    InputQueue.AddBuffer(TlkJSON.GenerateText(jsObj));
+    if not FPolled then result:='';
+  end else if Sametext(cmd,'fkey') then begin
+    if Assigned(FScraper) then
+      FScraper.PressFunctionKey(jsObj.Field['key'].Value);
+  end else if Sametext(cmd,'cli') then
+    Result := ExecCommandLineOrder(jsObj)
+  else if Sametext(cmd,'connect') then begin
+    SetParams(jsObj);
+    FAuthStatus:=asAuthNotRequired;
+    if (FClientType = ctPresentationViewer) and
+      (FauthByPass='{66CB6117-F8E7-4F3F-BD1C-463E62BE6564}') then begin
+      FAuthStatus:=asAuthenticated;
+      FConnectStatus := csLocal;
+    end else begin
+      if Assigned(FOnProcessAuthentication) then begin
+        User:='';
+        FOnProcessAuthentication(self,lUser,FAuthStatus,FConnectError);
+      end;
+      if FConnectError<>'' then FConnectStatus:=csNone
+      else  if IsLocal then FConnectStatus := csLocal
+      else  FConnectStatus := csRemote;
+      if Islocal and (FAuthStatus=asAuthRequired) or
+         not IsLocal and (FAuthStatus>=asAuthenticated) then begin
+          result:='';
+          exit;
+         end;
+      User:=lUser;
+      if IsLocal then Refresh;
     end;
-  finally
-    FreeAndNil(jsObj);
+    result:=GetConnectStatus;
   end;
 end;
 
@@ -812,6 +1046,7 @@ function TClientSession.InputQueue: TThinBufferQueueThread;
 begin
   if not Assigned(FInputQueue) then begin
     FInputQueue := TThinBufferQueueThread.Create;
+    FInputQueue.Synchronous:=FScraper.SynchronizeInput;
     FInputQueue.OnProcess := QueuedProcessPacket;
   end;
   result:=FInputQueue;
@@ -822,23 +1057,83 @@ procedure TClientSession.QueuedProcessPacket(Sender: TObject;
 var
   jsObj:TlkJSONobject;
   cmd : string;
+  ch : word;
+  x,y,btn,delta : Integer;
 begin
   if Item.Length = 0 then Exit;
   jsObj:=TlkJSON.ParseText(Item.Buffer) as TlkJSONobject;
   if not Assigned(jsObj) then exit;
   try
     cmd:=jsObj.Field['cmd'].Value;
-    if Sametext(cmd,'mouse') then
-      ProcessMouseInput(jsObj.Field['x'].Value,
-        jsObj.Field['y'].Value,
-        jsObj.Field['btn'].Value,
+    if Sametext(cmd,'mouse') then begin
+      x:=0;y:=0;delta:=0;btn:=0;
+      if jsObj.Field['x']<>nil then
+        x:=jsObj.Field['x'].Value;
+      if jsObj.Field['y']<>nil then
+        y:=jsObj.Field['y'].Value;
+      if jsObj.Field['delta']<>nil then
+        delta:=jsObj.Field['delta'].Value;
+      if jsObj.Field['btn']<>nil then
+        btn:=jsObj.Field['btn'].Value;
+      ProcessMouseInput(x,y,delta,btn,
         jsObj.Field['action'].Value)
-    else if Sametext(cmd,'keyb') then
+    end else if Sametext(cmd,'keyb') then begin
+      if jsObj.Field['char']<>nil then
+        ch :=jsObj.Field['char'].Value
+      else ch:=0;
       ProcessKeyboardInput(jsObj.Field['key'].Value,
-         jsObj.Field['action'].Value='down');
+         ch,jsObj.Field['action'].Value='down');
+    end;
   finally
     FreeAndNil(jsObj);
   end;
+end;
+
+function TClientSession.RealMonitorCount:Integer;
+var
+  n : Integer;
+begin
+  result:=1;
+  for n := 1 to MyScreen.MonitorCount - 1 do
+    if not EqualRect(MyScreen.Monitors[n].BoundsRect,MyScreen.Monitors[n-1].BoundsRect) then
+      Inc(result);
+end;
+
+function TClientSession.RealMonitorIndex(Index: Integer): Integer;
+var
+  n,m : Integer;
+begin
+  result:=index;
+  m:=0;
+  if index>0 then
+    for n := 1 to MyScreen.MonitorCount - 1 do begin
+      if not EqualRect(MyScreen.Monitors[n].BoundsRect,MyScreen.Monitors[n-1].BoundsRect) then
+        Inc(m);
+      if m=Index then begin
+        result:=n;
+        exit;
+      end;
+    end;
+end;
+
+procedure TClientSession.DumpMonitorInfo;
+  procedure DumpMonitor(Monitor:TMonitor);
+  var
+    MonInfoEx: TMonitorInfoEx;
+  begin
+    MonInfoEx.cbSize := SizeOf(MonInfoEx);
+    GetMonitorInfo(Monitor.Handle, @MonInfoEx);
+    LogInfo(Format('Monitor info, nu,:%d, rcMonitor:%s, rcWork:%s, dwFlags:%d, szDevice:%s',
+      [Monitor.MonitorNum,DumpRect(MonInfoEx.rcMonitor),DumpRect(MonInfoEx.rcWork),MonInfoEx.dwFlags,
+       MonInfoEx.szDevice]));
+  end;
+var
+  n : Integer;
+begin
+  LogInfo(Format('RealMonitorCount:%d',[RealMonitorCount]));
+  LogInfo(Format('MonitorCount:%d',[MyScreen.MonitorCount]));
+  for n:=0 to MyScreen.MonitorCount-1 do
+    DumpMonitor(MyScreen.Monitors[n]);
 end;
 
 function TClientSession.GetSessionStatus: AnsiString;
@@ -846,42 +1141,58 @@ var
   jsObj,jsObj2 :TlkJSONobject;
   jsList : TlkJSONlist;
   n : Integer;
+  Log : ILogger;
 begin
+  Log := TLogger.Create(Self,'GetSessionStatus');
   jsObj :=TlkJSONobject.Create();
   try
-    jsObj.Add('cmd','sessionStatus');
-    if FGarbage then
-      jsObj.Add('id',-1)
-    else jsObj.Add('id',Integer(self));
-    jsObj.Add('active',FActive);
-    jsObj.Add('monitor',FActiveMonitor);
-    jsObj.Add('monitorCount',Screen.MonitorCount);
-    jsObj.Add('viewLeft',DVLeft(ActiveMonitor));
-    jsObj.Add('viewTop',DVTop(ActiveMonitor));
-    jsObj.Add('viewWidth',DVWidth(ActiveMonitor));
-    jsObj.Add('viewHeight',DVHeight(ActiveMonitor));
-    jsObj.Add('mouseControl',FMouseControl);
-    jsObj.Add('kbdControl',FKbdControl);
-    jsObj.Add('quality',FJPGQuality);
-    jsObj.Add('pixelFormat',Integer(FJPGPixelFormat));
-    jsObj.Add('grayscale',FJpgGrayScale);
-    jsObj.Add('useJpeg',FUseJpeg);
-    jsObj.Add('useCanvas',FUseCanvas);
-    jsObj.Add('embedImages',FEmbeddedImage);
-    jsObj.Add('seamless',FSeamless);
-    jsObj.Add('remotePointer',FRemotePointer);
-    jsObj.Add('ticket',FTicket);
-    jsObj.Add('dateTime',FormatDateTime('yyyy-mm-dd hh:mm:ss:zzz',Now));
-    jsList := TlkJSONlist.Create;
-    for n := 0 to Length(FProcessIds) - 1 do begin
-      jsObj2:=TlkJSONobject.Create;
-      jsObj2.Add('pid',FProcessIds[n]);
-      jsList.Add(jsObj2);
+    try
+      jsObj.Add('cmd','sessionStatus');
+      if FGarbage then begin
+        jsObj.Add('id','##');
+        exit;
+      end else jsObj.Add('id',FId);
+      jsObj.Add('active',FActive);
+      jsObj.Add('monitor',FActiveMonitor);
+      DumpMonitorInfo;
+      jsObj.Add('monitorCount',RealMonitorCount);
+      if FScraper <> nil then
+      begin
+        jsObj.Add('viewLeft',FScraper.DVLeft(ActiveMonitor));
+        jsObj.Add('viewTop',FScraper.DVTop(ActiveMonitor));
+        jsObj.Add('viewWidth',FScraper.DVWidth(ActiveMonitor));
+        jsObj.Add('viewHeight',FScraper.DVHeight(ActiveMonitor));
+      end else begin
+        jsObj.Add('viewLeft', MyScreen.Monitors[ActiveMonitor].Left);
+        jsObj.Add('viewTop', MyScreen.Monitors[ActiveMonitor].Top);
+        jsObj.Add('viewWidth', MyScreen.Monitors[ActiveMonitor].Width);
+        jsObj.Add('viewHeight', MyScreen.Monitors[ActiveMonitor].Height);
+      end;
+      jsObj.Add('mouseControl',FMouseControl);
+      jsObj.Add('kbdControl',FKbdControl);
+      jsObj.Add('quality',FJPGQuality);
+      jsObj.Add('pixelFormat',Integer(FJPGPixelFormat));
+      jsObj.Add('grayscale',FJpgGrayScale);
+      jsObj.Add('imageMethod',Integer(FImageMethod));
+      jsObj.Add('useCanvas',FUseCanvas);
+      jsObj.Add('embedImages',FEmbeddedImage);
+      jsObj.Add('binaryImages',FBinaryImages);
+      jsObj.Add('seamless',FSeamless);
+      jsObj.Add('remotePointer',FRemotePointer);
+      jsObj.Add('ticket',FTicket);
+      jsObj.Add('dateTime',FormatDateTime('yyyy-mm-dd hh:mm:ss:zzz',Now));
+      jsList := TlkJSONlist.Create;
+      for n := 0 to Length(FProcessIds) - 1 do begin
+        jsObj2:=TlkJSONobject.Create;
+        jsObj2.Add('pid',FProcessIds[n]);
+        jsList.Add(jsObj2);
+      end;
+      jsObj.Add('processes',jsList);
+      if FConnectError <> '' then
+        jsObj.Add('errormsg', FConnectError);
+    finally
+      result:=TlkJSON.GenerateText(jsObj);
     end;
-    jsObj.Add('processes',jsList);
-    if FConnectError <> '' then
-      jsObj.Add('errormsg', FConnectError);
-    result:=TlkJSON.GenerateText(jsObj);
   finally
     jsObj.Free;
   end;
@@ -900,4 +1211,8 @@ begin
   Result := TClientSession(inherited Items[Index]);
 end;
 
+initialization
+  gSessionList := TList.Create;
+finalization
+  gSessionList.Free;
 end.

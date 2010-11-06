@@ -162,13 +162,17 @@ var
     end;
 begin
   Result := True;
-  gSessionMutex := CreateMutex(nil, True, PAnsiChar(MutexName));
+  {$IFDEF UNICODE}
+  gSessionMutex := CreateMutex(nil, True, PWideChar(MutexName));
+  {$ELSE}
+  gSessionMutex := CreateMutex(nil, True, PChar(MutexName));
+  {$ENDIF}
   if GetLastError = ERROR_ALREADY_EXISTS then Result := False else
   if gSessionMutex = 0 then Result := False else
   if Global then
   begin
     CreateSecurityDescriptor;
-    gGlobalMutex := CreateMutex(nil, True, PAnsiChar(MutexName));
+    gGlobalMutex := CreateMutex(nil, True, PChar(MutexName));
     if GetLastError = ERROR_ALREADY_EXISTS then Result := False else
     if gGlobalMutex = 0 then Result := False;
   end;

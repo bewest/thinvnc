@@ -37,24 +37,33 @@ unit ThinVnc.Capture;
 {$I ThinVnc.inc}
 interface
 
-uses Windows,Classes,SysUtils,SyncObjs,
-  ThinVnc.Log,
+uses Windows,Classes,SysUtils,SyncObjs,Messages,Simpletimer,
+  ThinVnc.Log,ThinVnc.Utils,
   ThinVnc.MirrorWindow,ThinVnc.ClientSession;
 
 type
   TCaptureThread = class(TThread)
   private
-    FWmgr : TMirrorManager;
+    FScraper : TAbstractScraper;
     FReset : Boolean;
     FSessions : TClientSessionList;
     FCs : TCriticalSection;
     FEventCapture : TEvent;
     FEndWaitEvent: TEvent;
+    FOnSessionAdded: TNotifyEvent;
+    FOnSessionRemoved: TNotifyEvent;
+    FMethod:TThreadMethod;
     procedure LockList;
     procedure UnlockList;
     procedure Capture;
     procedure ForceCapture(Sender:TObject);
     function ProcessCapture:boolean;
+    procedure NotifySessionAdded;
+    procedure NotifySessionRemoved;
+    procedure SetScraper(const Value: TAbstractScraper);
+    procedure SyncTimer(Sender: TObject);
+  protected
+    procedure Synchronize(Method: TThreadMethod);overload;
   public
     constructor Create;
     destructor Destroy;override;
@@ -70,20 +79,77 @@ type
     procedure Execute;override;
     procedure Terminate; reintroduce; virtual;
     function  IsUserActive(AUser:string):Boolean;
-    property  MirrorManager:TMirrorManager read FWmgr;
+    property  Scraper:TAbstractScraper read FScraper write SetScraper;
+    property  OnSessionAdded : TNotifyEvent read FOnSessionAdded write FOnSessionAdded;
+    property  OnSessionRemoved : TNotifyEvent read FOnSessionRemoved write FOnSessionRemoved;
   end;
+
+function CaptureThread:TCaptureThread;
+
+implementation
 
 var
   gCaptureThread : TCaptureThread;
 
-implementation
+function CaptureThread:TCaptureThread;
+begin
+  if not Assigned(gCaptureThread) then
+    gCaptureThread := TCaptureThread.Create;
+  result:=gCaptureThread;
+end;
+
+Type
+  TSyncHelper = Class
+  Private
+    wnd: HWND;
+    Procedure MsgProc( Var msg: TMessage );
+    Procedure Wakeup( sender: TObject );
+  Public
+    Constructor Create;
+    Destructor Destroy; override;
+  End;
+
+Var
+  helper: TSyncHelper = nil;
+
+{ TSyncHelper }
+
+Constructor TSyncHelper.Create;
+Begin
+  inherited;
+  wnd:= AllocateHWnd( msgproc );
+  WakeMainThread := nil;
+  PostMessage( wnd, WM_USER, 0, 0 );
+End;
+
+Destructor TSyncHelper.Destroy;
+Begin
+  WakeMainThread := nil;
+  DeallocateHWnd( wnd );
+  inherited;
+End;
+
+Procedure TSyncHelper.MsgProc(Var msg: TMessage);
+Begin
+  If msg.Msg = WM_USER Then begin
+    WakeMainThread := Wakeup;
+    CheckSynchronize;
+  end else
+    msg.result := DefWindowProc( wnd, msg.msg, msg.WParam, msg.LParam );
+End;
+
+Procedure TSyncHelper.Wakeup(sender: TObject);
+Begin
+  PostMessage( wnd, WM_USER, 0, 0 );
+End;
 
 { TCaptureThread }
 
 constructor TCaptureThread.Create;
 begin
   inherited Create(true);
-  FWmgr:=TMirrorManager.Create;
+  if Assigned(gScraperClass) then
+    FScraper:=gScraperClass.Create(nil);
 //  FreeOnTerminate:=true;
   FSessions := TClientSessionList.Create;
   FCs:=TCriticalSection.Create;
@@ -93,14 +159,12 @@ end;
 
 destructor TCaptureThread.Destroy;
 begin
-  if gCaptureThread = Self then
-    gCaptureThread := nil;
   FreeSessions;
   FreeAndNil(FSessions);
   FreeAndNil(FEventCapture);
   FreeAndNil(FEndWaitEvent);
   FreeAndNil(FCs);
-  FreeAndNil(FWmgr);
+  FreeAndNil(FScraper);
   inherited;
 end;
 
@@ -113,7 +177,6 @@ begin
       if not TClientSession(Id).IsGarbage then
       begin
         result := TClientSession(Id);
-        result.Update;
       end;
       exit;
   finally
@@ -155,7 +218,7 @@ begin
   LockList;
   try
     for n := FSessions.Count - 1 downto 0 do
-       FSessions[n].ForceDisconnect:=true;
+       if (FSessions[n].Ticket<>'') then FSessions[n].ForceDisconnect:=true;
   finally
     UnlockList;
   end;
@@ -191,30 +254,98 @@ begin
   end;
 end;
 
-procedure TCaptureThread.AddSession(ASession:TClientSession);
+procedure TCaptureThread.SetScraper(const Value: TAbstractScraper);
+var
+  n : Integer;
 begin
+  FScraper := Value;
   LockList;
   try
+    for n := 0 to FSessions.Count - 1 do
+      TClientSession(FSessions[n]).Scraper:=FScraper;
+  finally
+    UnlockList;
+  end;
+
+end;
+
+procedure TCaptureThread.SyncTimer(Sender:TObject);
+begin
+  With (Sender as TSimpletimer) do begin
+    Enabled:=False;
+    FMethod;
+    free;
+  end;
+end;
+
+procedure TCaptureThread.Synchronize(Method:TThreadMethod);
+var
+  Log : ILogger;
+begin
+  Log:=TLogger.Create(Self,'Synchronize');
+  if IsLibrary and not Assigned(WakeMainThread) then Method
+  else begin
+{    with TSimpleTimer.Create do begin
+      FMethod:=Method;
+      Interval:=1;
+      OnTimer:=Synctimer;
+      Enabled:=true;
+    end;
+}    inherited Synchronize(Method);
+  end;
+end;
+
+procedure TCaptureThread.AddSession(ASession:TClientSession);
+var
+  Log : ILogger;
+begin
+  Log:=TLogger.Create(Self,'AddSession');
+  LockList;
+  try
+    Log.LogInfo('AfterLockList');
     FSessions.Remove(ASession);
     FSessions.Add(ASession);
     ASession.OnForceCapture:=ForceCapture;
     FReset:=FSessions.Count=1;
+    resume;
   finally
     UnlockList;
   end;
+  Synchronize(NotifySessionAdded);
 end;
 
 procedure TCaptureThread.RemoveSession(ASession:TClientSession;AFree:Boolean=false);
+var
+  Log : ILogger;
 begin
+  Log:=TLogger.Create(Self,'RemoveSession');
   if not assigned(FSessions) then exit;
 
   LockList;
   try
+    if FSessions.IndexOf(ASession)=-1 then exit;
+
     if (FSessions.Remove(ASession)>=0) and AFree then
       ASession.Free;
   finally
     UnlockList;
   end;
+end;
+
+procedure TCaptureThread.NotifySessionAdded;
+begin
+  if Assigned(FOnSessionAdded) then
+    FOnSessionAdded(Self);
+  if assigned(FScraper) then
+    FScraper.SessionAdded(self);
+end;
+
+procedure TCaptureThread.NotifySessionRemoved;
+begin
+  if Assigned(FOnSessionRemoved) then
+    FOnSessionRemoved(Self);
+  if assigned(FScraper) then
+    FScraper.SessionRemoved(self);
 end;
 
 procedure TCaptureThread.Terminate;
@@ -229,7 +360,8 @@ procedure TCaptureThread.Capture;
 //  Log : ILogger;
 begin
 //  Log:=TLogger.Create(Self,'Capture');
-  FWmgr.Capture;
+  if FScraper <> nil then
+    FScraper.Capture;
 end;
 
 procedure TCaptureThread.ForceCapture(Sender:TObject);
@@ -244,6 +376,8 @@ begin
   Log:=TLogger.Create(Self,'FreeSessions');
   LockList;
   try
+    if not assigned(FSessions) then exit;
+
     for I := FSessions.Count - 1 downto 0 do
       RemoveSession(FSessions[I],true);
     FSessions.Clear;
@@ -257,18 +391,23 @@ procedure TCaptureThread.Execute;
   var
     n, m,SessionCount : Integer;
     events : array of THandle;
+    SessionRemoved : Boolean;
   begin
+    SessionRemoved := False;
     LockList;
     try
       FEndWaitEvent.ResetEvent;
       SetLength(events,FSessions.Count + 1);
       events[0] := FEndWaitEvent.Handle;
       m := 1;
+
+      if Assigned(FScraper) then
+        FScraper.FlushKeyboard;
       for n := FSessions.Count - 1 downto 0 do
         if FSessions[n].IsGarbage then begin
           RemoveSession(FSessions[n],true);
+          SessionRemoved:=true;
         end else begin
-          FSessions[n].FlushKeyboard;
           if FSessions[n].Active then begin
             events[m]:= FSessions[n].EnableEvent.Handle;
             Inc(m);
@@ -280,32 +419,33 @@ procedure TCaptureThread.Execute;
       UnlockList
     end;
 
+    if SessionRemoved then
+      Synchronize(NotifySessionRemoved);
+
     if (SessionCount=0) or not result then begin
       LogInfo('Suspending 1');
       Suspend;
     end;
 
-    if result then begin
-      if WaitForMultipleObjects(m,@events[0],false,10000)=WAIT_TIMEOUT then
-      begin
-        LogError('Timeout detected');
-        // Fuerzo la rehabilitacion para que no se cuelgue
-        for n := FSessions.Count - 1 downto 0 do
-          FSessions[n].Enable;
-      end;
-    end;
+    if result then
+      result:=WaitForMultipleObjects(m,@events[0],false,1000)<>WAIT_TIMEOUT;
   end;
+  
 var
   delta : Integer;
+  StartTime : TDatetime;
 begin
   while not Terminated do begin
-    WaitforSessionsEnabled;
+    StartTime:=now;
+    if not WaitforSessionsEnabled then continue;
     if Terminated then Break;
 
+    if assigned(FScraper) then begin
+      delta:=FScraper.FrameDelay-DateTimeToTimeStamp(Now-StartTime).Time;
+      if delta>0 then FEventCapture.WaitFor(delta);
+    end;
+
     ProcessCapture;
-    delta:=10;//100;//50;//100-DateTimeToTimeStamp(Now-CaptureTime).Time
-    if delta>0 then
-      FEventCapture.WaitFor(delta);
   end;
 end;
 
@@ -315,7 +455,11 @@ var
   rc : boolean;
 begin
   Result := False;
-  Capture;
+  if FScraper=nil then exit;
+
+  if FScraper.SynchronizeCapture then
+    Synchronize(Capture)
+  else Capture;
   LockList;
   try
     if FSessions.Count>0 then begin
@@ -344,12 +488,16 @@ begin
     FCs.Leave;
 end;
 
-initialization
-  gCaptureThread := TCaptureThread.Create;
-finalization
+Initialization
+  if IsLibrary then begin
+    Assert(MainThreadId=GetCurrentThreadId);
+    helper:= TSyncHelper.Create;
+  end;
+Finalization
   if Assigned(gCaptureThread) then begin
     gCaptureThread.Terminate;
-    FreeAndNil(gCaptureThread);
+    gCaptureThread.free;
   end;
+  FreeAndNil(helper);
 end.
 

@@ -32,6 +32,5 @@
 // http://en.wikipedia.org/wiki/GPL
 //
 
-{$DEFINE ENABLE_NO_OPENSOURCE_SECTION}
-{.$DEFINE USE_TCP}
-{$DEFINE CLIPPING_WINDOWS}
+
+

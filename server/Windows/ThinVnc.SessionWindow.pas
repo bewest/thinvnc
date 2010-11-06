@@ -37,10 +37,13 @@ unit ThinVnc.SessionWindow;
 {$I ThinVnc.inc}
 interface
 uses Windows,Classes,SysUtils,Graphics,DateUtils,
-  jpeg,pngimage,math,strutils, Contnrs, GIFImg,
+  jpeg,math,strutils, Contnrs,
+  pngimage,
 {.$DEFINE DEBUG_BMP}
   ThinVnc.Log,
   ThinVnc.Utils,ThinVnc.MirrorWindow;
+
+{$DEFINE CAPTURE_CHANGEDRGN}
 
 type
   TSessionWindow = class;
@@ -55,7 +58,7 @@ type
   public
     constructor Create(ASessionWindow:TSessionWindow;ARect:TRect;Bmp:TBitmap);overload;
     destructor Destroy;override;
-    function GetStream(usejpeg:Boolean;JpgQuality:Integer;
+    function GetStream(ImageMethod:TImageMethod;JpgQuality:Integer;
         JpgPixelFormat:TJpegPixelFormat;JpgGrayScale:Boolean):TStream;
     property Stream :TMemoryStream read FStream;
     property ID:string read FId;
@@ -80,7 +83,7 @@ type
     function GetBoundsRect: TRect;
     function GetHandle: THandle;
     function GetzIndex: Integer;
-    function GetMirrorManager: TMirrorManager;
+    function GetScraper: TAbstractScraper;
     function GetProcessId: Integer;
     function GetClassname: string;
     procedure ReCreateImage;
@@ -90,12 +93,13 @@ type
     destructor  Destroy;override;
     procedure   ApplyDifferences;
     procedure   UpdateBitmap;
-    function    getJson(path:string;EmbeddedImage,BinaryImages,UseJpeg:Boolean;
+    function    IsMasked: Boolean;
+    function    getJson(path:string;EmbeddedImage,BinaryImages:Boolean; ImageMethod: TImageMethod;
                         JpgQuality:Integer;JpgPixelFormat:TJpegPixelFormat;
                         JpgGrayScale:Boolean): string;
-    function    CaptureDifferences(ActiveMonitor:Integer;reset:boolean=false): Boolean;
+    function    CaptureDifferences(AChangedRgn:HRGN;ActiveMonitor:Integer;reset:boolean=false): Boolean;
     function    IsShellWindow:Boolean;
-    property    MirrorManager:TMirrorManager read GetMirrorManager;
+    property    Scraper:TAbstractScraper read GetScraper;
     property    BoundsRect:TRect read GetBoundsRect;
     property    Active:Boolean read GetActive;
     property    zIndex:Integer read GetzIndex;
@@ -109,8 +113,8 @@ type
   private
     function GetItems(Index: Integer): TSessionWindow;
   public
-    function Add(Item: TSessionWindow): Integer;
-    property Items[Index: Integer]: TSessionWindow read GetItems; default;
+    function  Add(Item: TSessionWindow): Integer;
+    property  Items[Index: Integer]: TSessionWindow read GetItems; default;
   end;
 
 implementation
@@ -132,55 +136,105 @@ begin
   inherited;
 end;
 
-
-function TBmpPart.GetStream(usejpeg: Boolean;JpgQuality:Integer;
-        JpgPixelFormat:TJpegPixelFormat;JpgGrayScale:Boolean): TStream;
-  var
-  Jpg : jpeg.TJpegImage;
-  Png : TPNGObject;
-//  Log : Ilogger;
-  Start1,Start2 : TDatetime;
-  s : AnsiString;
-  h : Integer;
+{function TBmpPart.MaxPngSize(W,H : Integer):Integer;
 begin
-//  Log := TLogger.Create(Self,'GetStream');
-  if not Assigned(FStream) then begin
-    FStream:=TMemoryStream.Create;
-    if usejpeg then begin
-      Start1:=Now;
-      Jpg := jpeg.TJpegImage.Create;
-      try
-        Jpg.CompressionQuality:=JpgQuality;
-        Jpg.PixelFormat:=jf24Bit;
-        Jpg.GrayScale:=JpgGrayScale;
-        if JpgPixelFormat=jf8Bit then begin
-          CopyBmpToJpg(Jpg,FBitmap,Rect(0,0,FBitmap.Width,FBitmap.Height),pf8bit);
-        end else Jpg.Assign(FBitmap);
-        FImageType:='jpeg';
-        try
-          Jpg.SaveToStream(FStream);
-        except
-          On E:Exception do begin
-            FBitmap.SaveToStream(FStream);
-            FImageType:='bmp';
-          end;
-        end;
-      finally
-        Jpg.Free;
-      end;
-{$IFDEF DEBUG_BMP}
-      LogBitmap(Format('Image',[Integer(Self)]),FBitmap);
-{$ENDIF}
-    end else begin
-      png:=TPNGObject.Create;
-      try
-        png.Assign(FBitmap);
-        png.SaveToStream(FStream);
-      finally
-        png.Free;
-      end;
+//
+end;
+}
+function TBmpPart.GetStream(ImageMethod:TImageMethod;JpgQuality:Integer;
+        JpgPixelFormat:TJpegPixelFormat;JpgGrayScale:Boolean): TStream;
+  
+  function BytesPerPixel(pf: TPixelFormat): integer;
+  begin
+    case pf of
+      pf1bit,
+      pf4bit,
+      pf8bit:  Result := 1;
+      pf15bit,
+      pf16bit: Result := 2;
+      pf24bit: Result := 3;
+      else Result := 4;
     end;
   end;
+
+  procedure DumpPerformance(type_:string;start:TDatetime;size:Integer);
+  var
+    ratio : Integer;
+  begin
+    ratio:=100-size *100 div (FBitmap.Width*FBitmap.Height*BytesPerPixel(FBitmap.PixelFormat));
+    LogInfo(Format('%s Size:%d Osize:%d Ratio:%d time:%.3d',[type_,size,(FBitmap.Width*FBitmap.Height*BytesPerPixel(FBitmap.PixelFormat)),ratio,DateTimeToTimeStamp(Now-Start).Time]));
+  end;
+
+  function SaveToPng:Integer;
+  var
+    Png : TPNGObject;
+    Start : TDatetime;
+  begin
+    FStream.Clear;
+    Start:=Now;
+    png:=TPNGObject.Create;
+    try
+      if JpgPixelFormat=jf8Bit then
+        CopyBmpToPng(png,FBitmap,Rect(0,0,FBitmap.Width,FBitmap.Height),pf8bit)
+      else png.Assign(FBitmap);
+      png.SaveToStream(FStream);
+      result:=FStream.Size;
+      FImageType:='png';
+    finally
+      png.Free;
+    end;
+    DumpPerformance('PNG',Start,result);
+  end;
+
+  function SaveToJpeg:Integer;
+  var
+    Jpg : jpeg.TJpegImage;
+    Start : TDatetime;
+  begin
+    FStream.Clear;
+    Start:=Now;
+  
+    Jpg := jpeg.TJpegImage.Create;
+    try
+      Jpg.CompressionQuality:=JpgQuality;
+      Jpg.PixelFormat:=jf24Bit;
+      Jpg.GrayScale:=JpgGrayScale;
+      if JpgPixelFormat=jf8Bit then begin
+        CopyBmpToJpg(Jpg,FBitmap,Rect(0,0,FBitmap.Width,FBitmap.Height),pf8bit);
+      end else Jpg.Assign(FBitmap);
+      FImageType:='jpeg';
+      Jpg.SaveToStream(FStream);
+    finally
+      Jpg.Free;
+    end;
+    result:=FStream.Size;
+    DumpPerformance('JPG',Start,result);
+  end;
+
+  function BitmapDataPtr(const Image: TBitmap): pointer;
+  begin
+    With Image do
+      Result := ScanLine[Height-1];
+  end;
+
+
+var
+  s : AnsiString;
+  Count : Integer;
+begin
+  if not Assigned(FStream) then
+    FStream:=TMemoryStream.Create;
+
+  Count:=FBitmap.Width*FBitmap.Height;
+  case ImageMethod of
+    imJpeg: try
+              SaveToJpeg;
+            except
+              SaveToPng;
+            end;
+    imPng: SaveToPng;
+  end;
+
   result:=FStream;
 end;
 
@@ -232,9 +286,9 @@ begin
       (FMirrorWindow.Classname='Shell_TrayWnd');
 end;
 
-function TSessionWindow.GetMirrorManager: TMirrorManager;
+function TSessionWindow.GetScraper: TAbstractScraper;
 begin
-  result:=FMirrorWindow.MirrorManager;
+  result:=FMirrorWindow.Scraper;
 end;
 
 function TSessionWindow.GetProcessId: Integer;
@@ -248,11 +302,23 @@ var
   h,w : Integer;
   rc:boolean;
 begin
+  if (Width(BoundsRect)<=0) or (Height(BoundSRect)<=0) or not assigned(FImage) then exit;
+
   if ((Width(BoundsRect)<>FImage.Width) or (Height(BoundSRect)<>FImage.Height)) then begin
     NewImage := FMirrorWindow.CreateBitmap;
-    Bitblt(NewImage.Canvas.Handle,
-         0,0,Min(FImage.Width,FImage.Width),Min(FImage.Height,NewImage.Height),
-        FImage.Canvas.handle, 0,0,SRCCOPY);
+    NewImage.Canvas.Lock;
+    try
+      FImage.Canvas.Lock;
+      try
+        Bitblt(NewImage.Canvas.Handle,
+           0,0,Min(FImage.Width,FImage.Width),Min(FImage.Height,NewImage.Height),
+            FImage.Canvas.handle, 0,0,SRCCOPY);
+      finally
+        FImage.Canvas.Unlock;
+      end;
+    finally
+      NewImage.Canvas.Unlock;
+    end;
     FImage.Free;
     FImage:=NewImage;
   end;
@@ -260,35 +326,57 @@ end;
 
 procedure TSessionWindow.ApplyDifferences;
 var
-  I: Integer;
+  I,n: Integer;
   BmpPart : TBmpPart;
+  brush : TBrush;
 begin
+  if (FDiffBmpList.Count=0) and (FMirrorWindow.BitmapCache=nil) and Assigned(FImage) then begin
+    FreeAndNil(FImage);
+    FDiffBmpList.Clear;
+    exit;
+  end;
+
   if FDiffBmpList.Count=0 then exit;
 
+  if not Assigned(FImage) then FImage:=CreateBlackImage;
+  
   for I := 0 to FDiffBmpList.Count -1 do
   begin
      BmpPart := FDiffBmpList[I];
      with BmpPart do begin
-       Bitblt(FImage.Canvas.Handle,
-            FRect.Left,FRect.Top,Width(FRect),Height(FRect),
-            FBitmap.Canvas.handle, 0,0,SRCCOPY);
+       FImage.Canvas.Lock;
+       try
+         FBitmap.Canvas.Lock;
+         try
+           for n:=0 to 10 do begin
+            if Bitblt(FImage.Canvas.Handle,
+              FRect.Left,FRect.Top,Width(FRect),Height(FRect),
+              FBitmap.Canvas.handle, 0,0,SRCCOPY) then break;
+            Sleep(10);
+           end;
+         finally
+           FBitmap.Canvas.Unlock;
+         end;
+       finally
+         FImage.Canvas.Unlock;
+       end;
+{$IFDEF DEBUG_BMP}
+       LogBitmap(Format('ImagePart Handle:%d R(%d,%d,%d,%d)',[FMirrorWindow.Handle,FRect.Left,FRect.Top,Width(FRect),Height(FRect)]),FBitmap);
+//       LogBitmap(Format('Image Handle:%d',[FMirrorWindow.Handle]),FImage);
+{$ENDIF}
      end;
   end;
   FDiffBmpList.Clear;
 end;
 
 function TSessionWindow.CreateBlackImage:TBitmap;
-var
-  brush : TBrush;
 begin
   result:=FMirrorWindow.CreateBitmap;
-  brush:=TBrush.Create;
+  result.Canvas.Lock;
   try
-    brush.Color:=clBlack;
-    brush.Style:=bsSolid;
-    FillRect(result.Canvas.Handle,Rect(0,0,result.Width,result.Height),brush.Handle);
+    FillRect(result.Canvas.Handle,Rect(0,0,result.Width,result.Height),GetStockObject(BLACK_BRUSH));
   finally
-    brush.free;
+    result.Canvas.Unlock;
   end;
 end;
 
@@ -298,63 +386,78 @@ begin
   FImage:=CreateBlackImage;
 end;
 
-function TSessionWindow.CaptureDifferences(ActiveMonitor:Integer;reset: boolean): Boolean;
+function TSessionWindow.CaptureDifferences(AChangedRgn:HRGN;ActiveMonitor:Integer;reset: boolean): Boolean;
 var
-  ObjIndex: Integer;
   TmpImage : TBitmap;
-//  png : TPNGObject;
   Jpg : TJpegImage;
   ra,ra2 : TRectArray;
   n,m : Integer;
   tmpbmp : TBitmap;
   rbmp : TRect;
   R : TRect;
-  FreeTmpImage : Boolean;
+  Rgn : HRGN;
+  aux : string;
+  BmpPart : TBmpPart;
 begin
   result:=False;
   FDiffBmpList.Clear;
 
-  IntersectRect(R,BoundsRect,DVRect(ActiveMonitor));
-  if Width(R)*Height(R)=0 then exit;
-  if not IsWindowVisible(Handle) or IsIconic(Handle) then exit;
+  if Scraper.UseChangedRgn and (AChangedRgn=0) and not reset then exit;
+//  IntersectRect(R,BoundsRect,Scraper.DVRect(ActiveMonitor));
+  R:=BoundsRect;
+  if (Width(R)*Height(R)=0) or IsIconic(Handle) then exit;
 
-  FreeTmpImage:=False;
-  ObjIndex := MirrorManager.LastCapture.IndexOf(IntToStr(Handle));
-  if ObjIndex < 0 then begin
-//  if MirrorManager.IsProcessExcluded(FMirrorWindow.ProcessId) then begin
-    TmpImage:=CreateBlackImage;
-    FreeTmpImage:=True;
-  end else TmpImage:=MirrorManager.LastCapture.Objects[ObjIndex] as TBitmap;
+  TmpImage:=FMirrorWindow.BitmapCache;
+  if not Assigned(TmpImage) then exit;
 
-  try
-    if reset then begin
-      ReCreateImage;
-      SetLength(ra,1);
+  if reset then ReCreateImage;
+
+  OffsetRect(R,-BoundsRect.Left,-BoundsRect.Top);
+
+{$IFDEF CAPTURE_CHANGEDRGN}
+  if not reset and (AChangedRgn<>0) then begin
+    Rgn:=CreateRectRgnIndirect(BoundsRect);
+    try
+      CombineRgn(Rgn,Rgn,AChangedRgn,RGN_AND);
+      OffsetRgn(Rgn,-BoundsRect.Left,-BoundsRect.Top);
+      CombineRgn(Rgn,Rgn,FMirrorWindow.ClipRgn,RGN_AND);
+      ra:=ExtractClippingRegions(Rgn,R);
+    finally
+      DeleteObject(Rgn);
     end;
+  end else
+{$ENDIF}
+    ra:=ExtractClippingRegions(FMirrorWindow.ClipRgn,R);
 
-    OffsetRect(R,-BoundsRect.Left,-BoundsRect.Top);
+  result:=(Length(ra)>0);
+  for n := 0 to Length(ra) - 1 do begin
+    ra2:=GetDiffRects(FImage,TmpImage,ra[n]);
+    result:=result or (Length(ra2)>0);
+    for m := 0 to Length(ra2) - 1 do begin
+      rbmp := ra2[m];
+      IntersectRect(rbmp,rbmp,R);
+      if IsRectEmpty(rbmp) then continue;
 
-    ra:=FMirrorWindow.ExtractClippingRegions(R);
-    result:=(Length(ra)>0);
-    for n := 0 to Length(ra) - 1 do begin
-      rbmp := ra[n];
-      ra2:=GetDiffRects(FImage,TmpImage,ra[n]);
-      result:=result or (Length(ra2)>0);
-      for m := 0 to Length(ra2) - 1 do begin
-        rbmp := ra2[m];
-        IntersectRect(rbmp,rbmp,R);
-        if IsRectEmpty(rbmp) then continue;
-
-        FDiffBmpList.Add(TBmpPart.Create(Self,rbmp,CopyBmpToBmp(TmpImage,rbmp,TmpImage.PixelFormat)));
+      // problems with jpeg encoding
+      if Height(rbmp)=1 then begin
+        if rbmp.Top>0 then Dec(rbmp.Top,1)
+        else Inc(rbmp.bottom,1);
       end;
+
+      BmpPart:=TBmpPart.Create(Self,rbmp,CopyBmpToBmp(TmpImage,rbmp,TmpImage.PixelFormat));
+      FDiffBmpList.Add(BmpPart);
     end;
-    result:=FDiffBmpList.Count>0;
-  finally
-    if FreeTmpImage then TmpImage.Free;    
   end;
+
+  result:=FDiffBmpList.Count>0;
 end;
 
-function TSessionWindow.getJson(path: string; EmbeddedImage,BinaryImages, UseJpeg: Boolean;
+function TSessionWindow.IsMasked:Boolean;
+begin
+  result:=(FMirrorWindow.Masked);
+end;
+
+function TSessionWindow.getJson(path: string; EmbeddedImage,BinaryImages:Boolean; ImageMethod: TImageMethod;
   JpgQuality: Integer; JpgPixelFormat: TJpegPixelFormat;
   JpgGrayScale: Boolean): string;
 var
@@ -362,25 +465,24 @@ var
   img,imgs : string;
   bmpp : TBmpPart;
 begin
-  result:=Format('{ "hwnd":"%d","zidx":%d,"desktop":"%s","left":%d,"top":%d,"width":%d,"height":%d',
-                    [Handle,zIndex,FMirrorWindow.DesktopName,BoundsRect.Left,BoundsRect.Top,
-                              Width(BoundsRect),Height(BoundsRect)]);
+  result:=Format('{ "hwnd":"%d","zidx":%d,"left":%d,"top":%d,"width":%d,"height":%d,"mask":%s',
+                    [Handle,zIndex,BoundsRect.Left,BoundsRect.Top,
+                              Width(BoundsRect),Height(BoundsRect),Lowercase(BoolToStr(IsMasked,true))]);
 
   imgs:='';
   for n:=0 to FDiffBmpList.Count-1 do begin
-    MirrorManager.ConfirmUpdate;
     bmpp:=FDiffBmpList[n];
-    bmpp.GetStream(UseJpeg,JpgQuality,JpgPixelFormat,JpgGrayScale);
+    bmpp.GetStream(ImageMethod,JpgQuality,JpgPixelFormat,JpgGrayScale);
+ //     if (FMirrorWindow.Classname='Progman') then
+ //       LogBitmap(FMirrorWindow.Classname,bmpp.FBitmap);
 
     if EmbeddedImage and not BinaryImages then
       img:=Format('data:image/%s;base64,%s',[bmpp.FImageType,EncodeBase64(bmpp.FStream)])
     else begin
       with bmpp.FRect do begin
-        bmpp.FID:=Format('%.3d-%d-%d-%d-%d-%d-%d.%s',[MirrorManager.CaptureIndex,
+        bmpp.FID:=Format('%.3d-%d-%d-%d-%d-%d-%d.%s',[Scraper.CaptureIndex,
               Handle,Left,Top,Right,Bottom,Integer(bmpp),bmpp.FImageType]);
         img:=Format('%s/img?id=%s',[path,bmpp.FID]);
-        if not BinaryImages then
-          MirrorManager.Cache.Add(bmpp.FID,bmpp.FImageType,bmpp.FStream);
       end;
     end;
 
